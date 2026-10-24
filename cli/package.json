@@ -1,0 +1,26 @@
+{
+  "name": "sayops",
+  "version": "0.1.0",
+  "description": "Record an ops chore once, with the spoken reasons, and turn it into guarded, tested automation.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sayops": "dist/sayops.mjs"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && vitest run"
+  },
+  "dependencies": {
+    "@sayops/core": "*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5",
+    "vitest": "^3.2.0"
+  }
+}

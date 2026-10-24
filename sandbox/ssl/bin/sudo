@@ -1,0 +1,3 @@
+#!/bin/sh
+# Sandbox stand-in: everything already runs as root inside the container.
+exec "$@"

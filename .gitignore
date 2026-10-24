@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+.next/
+dist/
+.DS_Store
+.sayops/
+.tools/
+cli/dist/
+.env.*
+!.env.example
+.vercel/
+coverage/
+*.tsbuildinfo
+*.log

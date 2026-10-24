@@ -1,0 +1,15 @@
+{
+  "name": "sayops-monorepo",
+  "private": true,
+  "workspaces": [
+    "web",
+    "cli",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "test": "npm test -w @sayops/core && npm test -w sayops",
+    "build:cli": "npm run build -w sayops"
+  }
+}

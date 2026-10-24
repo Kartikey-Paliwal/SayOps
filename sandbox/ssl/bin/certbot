@@ -1,0 +1,29 @@
+#!/bin/bash
+# SayOps sandbox stand-in for certbot. Same commands and file layout as the real tool, but
+# certificates come from a local test CA and nothing leaves the container (it has no network).
+set -euo pipefail
+cmd=${1:-}; shift || true
+D=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in -d|--domain|--cert-name) D=$2; shift 2 ;; *) shift ;; esac
+done
+D=${D:-$(cat /etc/sayops-sandbox/domain)}
+L=/etc/letsencrypt/live/$D
+case "$cmd" in
+  certificates)
+    end=$(openssl x509 -enddate -noout -in "$L/cert.pem" | cut -d= -f2)
+    days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    printf 'Found the following certs:\n  Certificate Name: %s\n    Domains: %s\n    Expiry Date: %s (VALID: %s days)\n    Certificate Path: %s/fullchain.pem\n' \
+      "$D" "$D" "$end" "$days" "$L"
+    ;;
+  renew)
+    if pgrep -x nginx >/dev/null; then
+      echo "Problem binding to port 80: Could not bind to IPv4 or IPv6 (nginx is still running)." >&2
+      exit 1
+    fi
+    n=$(find "/etc/letsencrypt/archive/$D" -name 'cert*.pem' | wc -l)
+    sayops-sandbox-issue "$D" 90 $((n + 1)) "$(cat /etc/sayops-sandbox/fault)"
+    echo "Congratulations, all renewals succeeded: $L/fullchain.pem"
+    ;;
+  *) echo "sandbox certbot: only 'certificates' and 'renew' are supported" >&2; exit 1 ;;
+esac

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Issues cert number N for DOMAIN from the sandbox CA, in certbot's real layout:
+#   /etc/letsencrypt/archive/D/{cert,chain,fullchain,privkey}N.pem, live/D/*.pem -> ../../archive/D/*N.pem
+# FAULT=broken-config writes a private key that does not match the certificate.
+set -euo pipefail
+D=$1 DAYS=$2 N=$3 FAULT=${4:-none}
+CA=/etc/sayops-sandbox/ca
+A=/etc/letsencrypt/archive/$D
+L=/etc/letsencrypt/live/$D
+mkdir -p "$A" "$L"
+tmp=$(mktemp -d)
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=$D" \
+  -keyout "$A/privkey$N.pem" -out "$tmp/req.csr" 2>/dev/null
+printf 'subjectAltName=DNS:%s\n' "$D" > "$tmp/ext"
+openssl x509 -req -in "$tmp/req.csr" -CA "$CA/ca.pem" -CAkey "$CA/ca.key" -CAcreateserial \
+  -days "$DAYS" -extfile "$tmp/ext" -out "$A/cert$N.pem" 2>/dev/null
+cp "$CA/ca.pem" "$A/chain$N.pem"
+cat "$A/cert$N.pem" "$CA/ca.pem" > "$A/fullchain$N.pem"
+if [ "$FAULT" = broken-config ]; then
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$A/privkey$N.pem" 2>/dev/null
+fi
+chmod 600 "$A/privkey$N.pem"
+rm -rf "$tmp"
+for f in cert chain fullchain privkey; do ln -sfn "../../archive/$D/$f$N.pem" "$L/$f.pem"; done

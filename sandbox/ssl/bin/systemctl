@@ -1,0 +1,17 @@
+#!/bin/bash
+# SayOps sandbox stand-in for systemctl (containers have no systemd). Only nginx is managed.
+set -uo pipefail
+running() { pgrep -x nginx >/dev/null; }
+case "${1:-} ${2:-}" in
+  "stop nginx")
+    running || exit 0
+    nginx -s quit
+    for _ in $(seq 50); do running || exit 0; sleep 0.1; done
+    echo "nginx did not stop" >&2; exit 1 ;;
+  "start nginx")
+    running && exit 0
+    nginx ;;
+  "restart nginx") "$0" stop nginx && "$0" start nginx ;;
+  "is-active nginx") if running; then echo active; else echo inactive; exit 3; fi ;;
+  *) echo "sandbox systemctl: only start|stop|restart|is-active nginx are supported" >&2; exit 1 ;;
+esac

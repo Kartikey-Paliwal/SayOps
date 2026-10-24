@@ -1,0 +1,25 @@
+{
+  "name": "@sayops/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "compile:seed": "tsx scripts/compile-seed.ts",
+    "proof:ssl": "tsx scripts/proof-ssl.ts"
+  },
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^3.2.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./store": "./src/store/index.ts"
+  }
+}
