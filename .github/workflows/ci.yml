@@ -1,0 +1,90 @@
+# SayOps CI: every push to main and every pull request must pass before it ships.
+# Vercel deploys main (production) and each PR (preview) through its GitHub app — no secrets here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ACTIONLINT_VERSION: "1.7.7"
+  ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+
+jobs:
+  test:
+    name: Tests, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install zsh (for the real-shell hook tests) and actionlint
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zsh >/dev/null
+          mkdir -p .tools/bin
+          curl -fsSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz -C .tools/bin actionlint
+          rm actionlint.tar.gz
+          shellcheck --version | head -2
+          zsh --version
+
+      - name: Lint workflows and shell scripts
+        run: |
+          .tools/bin/actionlint
+          shellcheck sandbox/ssl/init.sh sandbox/ssl/bin/certbot sandbox/ssl/bin/systemctl sandbox/ssl/bin/sayops-sandbox-issue docs/real-task/*.sh
+
+      - name: Type check
+        run: |
+          npx tsc -p packages/core
+          npx tsc -p cli
+
+      - name: Tests (core + CLI)
+        run: npm test
+
+      - name: Web build, types and lint
+        run: |
+          npm run build -w web
+          npx tsc --noEmit -p web
+          (cd web && npx eslint app)
+
+  sandbox-proof:
+    name: Sandbox proof (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the generated SSL script in throwaway containers (normal, broken config, not expiring)
+        env:
+          SAYOPS_DOCKER_TESTS: "1"
+        run: npx -w @sayops/core vitest run test/proof.docker.test.ts
+
+      - name: No sandbox containers left behind
+        run: test "$(docker ps -aq --filter label=sayops.proof=1 | wc -l)" -eq 0
