@@ -66,7 +66,16 @@ export function validatePlan(raw: unknown, session: AlignedSession, corrections:
     ...plan.verify.map((v) => v.run),
   ];
   for (const p of plan.params) {
-    if (runs.some((r) => r.includes(p.from))) errors.push(`"${p.from}" is still hard-coded; use $${p.name}`);
+    // "<REQUIRED>" / "<REDACTED:…>" are placeholders for values that were never recorded in clear.
+    if (!p.from.startsWith("<") && runs.some((r) => r.includes(p.from))) errors.push(`"${p.from}" is still hard-coded; use $${p.name}`);
+  }
+  if (plan.schedule) cite("schedule", plan.schedule.why);
+  // $PARAM inside single quotes never expands: the command would use the literal text "$PARAM".
+  const names = plan.params.map((p) => p.name);
+  for (const where of [...plan.steps.map((s) => ({ at: `step ${s.id}`, run: s.run })), ...plan.rollback.map((r, i) => ({ at: `rollback[${i}]`, run: r.run })), ...plan.verify.map((v, i) => ({ at: `verify[${i}]`, run: v.run }))]) {
+    for (const name of singleQuotedVars(where.run, names)) {
+      errors.push(`${where.at}: $${name} is inside single quotes, so it will not expand; use double quotes (escape inner double quotes) instead`);
+    }
   }
   for (const r of runs) {
     const m = r.match(/<REDACTED:[a-z_]+>/);
@@ -97,6 +106,26 @@ export function validatePlan(raw: unknown, session: AlignedSession, corrections:
   }
 
   return errors.length ? { ok: false, errors } : { ok: true, plan };
+}
+
+/** Names from `names` referenced as $NAME/${NAME} inside a single-quoted part of a shell command. */
+export function singleQuotedVars(cmd: string, names: string[]): string[] {
+  const found = new Set<string>();
+  let quote: "'" | '"' | null = null;
+  let segment = "";
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (quote === "'") {
+      if (ch === "'") {
+        for (const n of names) if (new RegExp(`\\$(?:\\{${n}\\b|${n}(?![A-Za-z0-9_]))`).test(segment)) found.add(n);
+        quote = null;
+        segment = "";
+      } else segment += ch;
+    } else if (ch === "\\") i++;
+    else if (quote === '"') { if (ch === '"') quote = null; }
+    else if (ch === "'" || ch === '"') quote = ch;
+  }
+  return [...found];
 }
 
 /** Paths passed to sayops_backup / sayops_restore in a command, unquoted and without a trailing slash. */

@@ -100,6 +100,15 @@ export const Finding = z.object({
 });
 export type Finding = z.infer<typeof Finding>;
 
+/** Five-field cron (minute hour day month weekday), as GitHub Actions reads it (UTC). */
+export const CRON = /^(\S+\s+){4}\S+$/;
+
+export const PlanSchedule = z.object({
+  cron: z.string().regex(CRON, "cron must have five fields, e.g. 0 9 * * 1"),
+  why: SourceId,
+});
+export type PlanSchedule = z.infer<typeof PlanSchedule>;
+
 export const Plan = z.object({
   title: z.string().min(1),
   /** name of the param holding the remote host, when any step is remote */
@@ -110,6 +119,8 @@ export const Plan = z.object({
   rollback: z.array(PlanCheck),
   verify: z.array(PlanCheck),
   findings: z.array(Finding),
+  /** recurring run, when a narration or correction asked for one; plans saved before this field existed read as null */
+  schedule: PlanSchedule.nullable().default(null),
 });
 export type Plan = z.infer<typeof Plan>;
 
@@ -146,4 +157,5 @@ export const planJsonSchema: Json = obj({
   rollback: arr(check),
   verify: arr(check),
   findings: arr(obj({ type: en(FINDING_TYPES), detail: str, sources: arr(sourceId), fix_step: nullable(stepId) })),
+  schedule: nullable(obj({ cron: desc("five-field cron in UTC, e.g. 0 9 * * 1 for Mondays 09:00"), why: sourceId })),
 });

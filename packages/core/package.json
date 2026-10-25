@@ -8,7 +8,8 @@
   "scripts": {
     "test": "vitest run",
     "compile:seed": "tsx scripts/compile-seed.ts",
-    "proof:ssl": "tsx scripts/proof-ssl.ts"
+    "proof:ssl": "tsx scripts/proof-ssl.ts",
+    "correction:seed": "tsx scripts/correction-seed.ts"
   },
   "dependencies": {
     "zod": "^3.25.0"

@@ -230,3 +230,87 @@ describe("redaction", () => {
     expect(readSession(home, id).summary?.redactions).toBe(4);
   });
 });
+
+describe("sayops fix (talk-to-fix)", () => {
+  // A compiled, stopped session built from the SSL seed, with a fake model.
+  let id: string;
+  const seedPlan = async () => (await import("@sayops/core")).sslRenewPlan;
+  const withSlack = async () => {
+    const p = structuredClone(await seedPlan());
+    p.steps.push({ id: "S7", intent: "Notify Slack", run: 'curl -fsS "$SLACK_WEBHOOK"', remote: false, sources: ["X1"], added: true, condition: null, on_fail: "continue", risk: "LOW" });
+    p.params.push({ name: "SLACK_WEBHOOK", from: "<REDACTED:secret>", why: "X1", validate: null });
+    p.schedule = { cron: "0 9 * * 1", why: "X1" };
+    return p;
+  };
+  function withModel(plan: unknown, stdin = "", line: string | null = null): Ctx {
+    return { ...ctx(stdin), llm: async () => ({ content: JSON.stringify(plan), model: "fake" }), readLine: () => line };
+  }
+
+  beforeEach(async () => {
+    const core = await import("@sayops/core");
+    const store = await import("@sayops/core/store");
+    await cli(["start", core.sslRenewMeta.title]);
+    id = current();
+    for (const e of core.redactEvents(core.sslRenewEvents).events) store.appendEvent(home, id, e);
+    await cli(["stop"]);
+    await run(["compile", id], withModel(core.sslRenewPlan));
+  });
+
+  it("compile saved v1", async () => {
+    const { listPlanVersions } = await import("@sayops/core/store");
+    expect(listPlanVersions(home, id).map((v) => [v.version, v.meta.source])).toEqual([[1, "compile"]]);
+  });
+
+  it("asks for the correction at a fix> prompt, then shows v2 and exactly what changed", async () => {
+    out = [];
+    expect(await run(["fix"], withModel(await withSlack(), "", "also post to Slack when it's done, and run this every Monday at 9"))).toBe(0);
+    const text = out.join("\n");
+    expect(text).toContain("Say what should change");
+    expect(text).toContain("✔ X1 “also post to Slack when it's done, and run this every Monday at 9” → plan v2 (was v1)");
+    expect(text).toContain("+ S7 Notify Slack");
+    expect(text).toContain("~ schedule: none → 0 9 * * 1 (UTC)");
+    expect(text).toContain("+ parameter SLACK_WEBHOOK");
+    expect(text).toContain("Status: needs review");
+    expect(text).toContain("Confirm step S7 added from your correction");
+  });
+
+  it("takes the correction as arguments or from stdin", async () => {
+    expect(await run(["fix", id, "post", "to", "Slack"], withModel(await withSlack()))).toBe(0);
+    expect(await run(["fix", "--stdin"], withModel(await withSlack(), "and keep it optional"))).toBe(0);
+    const { listPlanVersions, readCorrections } = await import("@sayops/core/store");
+    expect(listPlanVersions(home, id).map((v) => v.version)).toEqual([1, 2, 3]);
+    expect(readCorrections(home, id).map((c) => c.text)).toEqual(["post to Slack", "and keep it optional"]);
+  });
+
+  it("cancelling the prompt changes nothing", async () => {
+    expect(await run(["fix"], withModel(await withSlack(), "", ""))).toBe(130);
+    expect(err.at(-1)).toContain("cancelled");
+    const { listPlanVersions } = await import("@sayops/core/store");
+    expect(listPlanVersions(home, id)).toHaveLength(1);
+  });
+
+  it("a failed recompile keeps the previous version and says why", async () => {
+    const broken = await withSlack();
+    broken.steps[6].sources = ["X9"];
+    expect(await run(["fix", "post to Slack"], withModel(broken))).toBe(1);
+    expect(err.at(-1)).toContain("could not be applied, so v1 is still the latest plan");
+    expect(err.at(-1)).toContain("X9");
+    const { listPlanVersions, readCorrections } = await import("@sayops/core/store");
+    expect(listPlanVersions(home, id)).toHaveLength(1);
+    expect(readCorrections(home, id)[0].status).toBe("failed");
+  });
+
+  it("refuses to fix a session that is recording or not compiled", async () => {
+    await cli(["start", "new one"]);
+    expect(await run(["fix", "x"], withModel(await withSlack()))).toBe(1);
+    expect(err.at(-1)).toContain("still recording");
+    await cli(["stop"]);
+    expect(await run(["fix", "x"], withModel(await withSlack()))).toBe(1);
+    expect(err.at(-1)).toContain("has not been compiled yet");
+  });
+
+  it("needs a key when no model is injected", async () => {
+    expect(await cli(["fix", id, "post to Slack"])).toBe(1);
+    expect(err.at(-1)).toContain("GROQ_API_KEY is not set");
+  });
+});

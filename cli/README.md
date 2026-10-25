@@ -10,7 +10,13 @@ eval "$(sayops hook zsh)"                        # capture in THIS shell only; n
 sayops stop
 eval "$(sayops unhook zsh)"                      # remove the hooks (or close the terminal)
 sayops show && sayops compile --env-file ~/Desktop/sayops/.env
+sayops fix --env-file ~/Desktop/sayops/.env       # talk-to-fix: dictate a correction at fix>, get plan v2 + what changed
 ```
+
+Talk-to-fix keeps every plan version (`~/.sayops/sessions/<id>/plans/v<N>.json`) and every correction
+(`corrections.json`, redacted). A correction that fails validation is recorded as failed and the previous
+version stays the latest. Anything a correction adds must be reviewed before the plan is "ready".
+In the local web app (`/local/<id>`) the same correction box works live when `web/.env.local` has `GROQ_API_KEY`.
 
 - Data: `$SAYOPS_HOME` (default `~/.sayops`), folders 0700, files 0600.
 - Commands and explanations are redacted before they are written; raw text is never stored.

@@ -1,11 +1,12 @@
 import { align, redactEvents } from "@sayops/core";
-import { alignOverrides, readEvents, readPlan, readSession, sayopsHome, SESSION_ID } from "@sayops/core/store";
+import { alignOverrides, appliedCorrections, listPlanVersions, readCorrections, readEvents, readSession, sayopsHome, SESSION_ID } from "@sayops/core/store";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { SessionView } from "../../s/[id]/session-view";
+import { SessionView, type VersionInfo } from "../../s/[id]/session-view";
+import { applyCorrectionAction } from "./actions";
 
 // Sessions recorded with the CLI on this machine ($SAYOPS_HOME, default ~/.sayops).
 // Read at request time on the server only; a hosted deployment has no such folder and 404s.
@@ -40,7 +41,10 @@ async function LocalSession({ params }: { params: PageProps<"/local/[id]">["para
   // Stored events are already redacted by the CLI; redacting again is a cheap second guard.
   const { events: safe } = redactEvents(events);
   const session = align(safe, { overrides: alignOverrides(stored) });
-  const plan = readPlan(home, id);
+  const planVersions = listPlanVersions(home, id);
+  const plan = planVersions.at(-1)?.plan ?? null;
+  const corrections = appliedCorrections(home, id);
+  const failed = readCorrections(home, id).filter((c) => c.status === "failed").map((c) => ({ seq: c.seq, text: c.text, error: c.error ?? "unknown error" }));
   const narrationCount = safe.filter((e) => e.kind === "narration").length;
 
   if (!plan) {
@@ -89,9 +93,17 @@ async function LocalSession({ params }: { params: PageProps<"/local/[id]">["para
       redacted={stored.summary?.redactions ?? 0}
       narrationCount={narrationCount}
       session={session}
-      plan={plan}
+      versions={planVersions.map((v): VersionInfo => ({
+        version: v.version,
+        plan: v.plan,
+        correction: v.meta.correction ? corrections.find((c) => c.seq === v.meta.correction) ?? null : null,
+        model: v.meta.model,
+        at: v.meta.at,
+        proofMatches: false,
+      }))}
+      corrections={corrections}
+      correctionMode={{ kind: "local", apply: applyCorrectionAction.bind(null, id), failed }}
       proof={null}
-      proofMatchesScript={false}
     />
   );
 }

@@ -1,8 +1,8 @@
 import { sayopsHome, StoreError } from "@sayops/core/store";
-import { readFileSync } from "node:fs";
+import { readFileSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  CliError, compileSession, discard, list, recordCommand, show, start, stop, why, type Ctx,
+  CliError, compileSession, discard, fixSession, formatDiff, list, recordCommand, show, start, stop, why, type Ctx,
 } from "./commands";
 import { hookScript, unhookScript } from "./hooks";
 
@@ -25,6 +25,9 @@ Other commands:
   sayops show [id]              commands and explanations, as stored (already redacted)
   sayops list                   all sessions
   sayops compile [id] [--env-file path]   build the plan with the AI compiler (needs GROQ_API_KEY)
+  sayops fix [id] ["<correction>"] [--env-file path]
+                                talk-to-fix: no text → dictate the correction at the fix> prompt;
+                                saves a NEW plan version and shows exactly what changed
   sayops discard --yes          delete the session that is recording
 
 Start a command with a space to keep it out of the recording.
@@ -166,8 +169,29 @@ export async function run(argv: string[], ctx: Ctx): Promise<number> {
         const p = parse(rest, ["env-file"]);
         ctx.err("sayops: compiling with the AI model…");
         const r = await compileSession(ctx, { id: p.positional[0], envFile: p.flags["env-file"] as string | undefined });
-        ctx.out(`✔ Compiled ${r.id} with ${r.model} (${r.attempts} attempt${r.attempts > 1 ? "s" : ""}): ${r.plan.steps.length} steps, ${r.plan.rollback.length} rollback, ${r.plan.verify.length} checks.`);
+        ctx.out(`✔ Compiled ${r.id} → plan v${r.version} with ${r.model} (${r.attempts} attempt${r.attempts > 1 ? "s" : ""}): ${r.plan.steps.length} steps, ${r.plan.rollback.length} rollback, ${r.plan.verify.length} checks.`);
         for (const f of r.plan.findings) ctx.out(`  ⚠ ${f.type.replace(/_/g, " ")}: ${f.detail}`);
+        ctx.out(`  Status: ${r.readiness.status.replace("_", " ")}`);
+        for (const b of r.readiness.blockers) ctx.out(`  ✖ ${b}`);
+        for (const v of r.readiness.reviews) ctx.out(`  • ${v.text}`);
+        ctx.out(`  Open: ${WEB}/local/${r.id}`);
+        return 0;
+      }
+
+      case "fix": {
+        const p = parse(rest, ["env-file"]);
+        const id = p.positional[0]?.startsWith("so_") ? p.positional.shift() : undefined;
+        let text = p.flags.stdin === true ? ctx.stdin() : p.positional.join(" ");
+        if (!text.trim() && p.flags.stdin !== true && ctx.readLine) {
+          ctx.out("Say what should change (hold your Wispr Flow key), then press Enter:");
+          text = ctx.readLine("fix> ") ?? "";
+          if (!text.trim()) throw new CliError("cancelled, nothing changed", 130);
+        }
+        ctx.err("sayops: recompiling with your correction…");
+        const r = await fixSession(ctx, { id, text, envFile: p.flags["env-file"] as string | undefined });
+        ctx.out(`✔ X${r.correction.seq} “${r.correction.text}” → plan v${r.next.version} (was v${r.previous.version}). What changed:`);
+        for (const l of formatDiff(r.diff, r.sources)) ctx.out(l);
+        if (r.redactions) ctx.out(`  (${r.redactions} secret(s) in the correction were redacted before saving)`);
         ctx.out(`  Status: ${r.readiness.status.replace("_", " ")}`);
         for (const b of r.readiness.blockers) ctx.out(`  ✖ ${b}`);
         for (const v of r.readiness.reviews) ctx.out(`  • ${v.text}`);
@@ -212,6 +236,25 @@ export function realCtx(): Ctx {
       }
     },
     sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+    readLine: (prompt) => {
+      if (!process.stdin.isTTY) return null;
+      process.stdout.write(prompt);
+      const buf = Buffer.alloc(1);
+      let line = "";
+      for (;;) {
+        let n = 0;
+        try {
+          n = readSync(0, buf, 0, 1, null);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "EAGAIN") continue;
+          return null;
+        }
+        if (n === 0) return line || null;
+        const ch = buf.toString("utf8");
+        if (ch === "\n") return line;
+        line += ch;
+      }
+    },
   };
 }
 

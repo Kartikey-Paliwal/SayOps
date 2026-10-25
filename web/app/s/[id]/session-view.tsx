@@ -1,11 +1,30 @@
 "use client";
 
 import {
-  assessReadiness, findingKey, slugify, sourceTexts,
-  type AlignedSession, type Decision, type Finding, type Plan, type PlanStep, type ProofRun, type ProofScenario, type Readiness,
+  assessReadiness, correctionAdditions, diffPlans, findingKey, slugify, sourceTexts,
+  type AlignedSession, type Correction, type Decision, type Finding, type Plan, type PlanDiff, type PlanStep, type ProofRun,
+  type ProofScenario, type Readiness,
 } from "@sayops/core";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+
+export interface VersionInfo {
+  version: number;
+  plan: Plan;
+  /** the correction that produced this version (null for a compile) */
+  correction: Correction | null;
+  model: string;
+  at: string;
+  /** the recorded sandbox proof was made with exactly this version's script */
+  proofMatches: boolean;
+}
+
+export type CorrectionMode =
+  /** seeded demo: one correction compiled live earlier and recorded; this site never calls the AI */
+  | { kind: "example"; text: string; recordedAt: string; model: string }
+  /** session recorded on this machine: corrections are compiled live by a local server action */
+  | { kind: "local"; apply: (text: string) => Promise<{ ok: true; version: number } | { ok: false; error: string }>; failed: { seq: number; text: string; error: string }[] }
+  | { kind: "none" };
 
 interface Props {
   sessionId: string;
@@ -15,28 +34,46 @@ interface Props {
   redacted: number;
   narrationCount: number;
   session: AlignedSession;
-  plan: Plan;
+  /** oldest first; for the "example" mode the last one is the recorded corrected version */
+  versions: VersionInfo[];
+  /** corrections that made it into a plan (X ids) */
+  corrections: Correction[];
+  correctionMode: CorrectionMode;
   proof: ProofRun | null;
-  proofMatchesScript: boolean;
 }
 
 export function SessionView(props: Props) {
-  const { session, plan, sessionId } = props;
-  const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const { session, sessionId, versions, correctionMode } = props;
+  const example = correctionMode.kind === "example";
+  // In the seeded demo the corrected version is revealed by applying the example correction.
+  const [exampleApplied, setExampleApplied] = useState(false);
+  const visible = example && !exampleApplied ? versions.slice(0, 1) : versions;
+  const [picked, setPicked] = useState<number | null>(null);
+  const current = visible.find((v) => v.version === picked) ?? visible.at(-1)!;
+  const previous = visible.filter((v) => v.version < current.version).at(-1) ?? null;
+  const plan = current.plan;
+  const corrections = useMemo(
+    () => props.corrections.filter((c) => visible.some((v) => v.version <= current.version && v.correction?.seq === c.seq)),
+    [props.corrections, visible, current.version],
+  );
+  const [allDecisions, setAllDecisions] = useState<Record<number, Record<string, Decision>>>({});
+  const decisions = useMemo(() => allDecisions[current.version] ?? {}, [allDecisions, current.version]);
   const [hover, setHover] = useState<string | null>(null);
-  const sources = useMemo(() => sourceTexts(session), [session]);
+  const sources = useMemo(() => sourceTexts(session, corrections), [session, corrections]);
   const kinds = useMemo(() => Object.fromEntries(plan.narrations.map((n) => [n.id, n.kind])), [plan]);
   const readiness = useMemo(
-    () => assessReadiness({ plan, session, decisions, sessionId, version: 1 }),
-    [plan, session, decisions, sessionId],
+    () => assessReadiness({ plan, session, corrections, decisions, sessionId, version: current.version }),
+    [plan, session, corrections, decisions, sessionId, current.version],
   );
-  const decide = (f: Finding, d: Decision | null) =>
-    setDecisions((prev) => {
-      const next = { ...prev };
-      if (d) next[findingKey(f)] = d;
-      else delete next[findingKey(f)];
-      return next;
+  const diff = useMemo(() => (previous ? diffPlans(previous.plan, plan) : null), [previous, plan]);
+  const setDecision = (key: string, d: Decision | null) =>
+    setAllDecisions((all) => {
+      const next = { ...(all[current.version] ?? {}) };
+      if (d) next[key] = d;
+      else delete next[key];
+      return { ...all, [current.version]: next };
     });
+  const decide = (f: Finding, d: Decision | null) => setDecision(findingKey(f), d);
 
   const gaps = plan.findings.filter((f) => f.type === "said_not_done");
   const otherFindings = plan.findings.filter((f) => f.type !== "said_not_done");
@@ -60,13 +97,26 @@ export function SessionView(props: Props) {
         <StatusBadge status={readiness.status} />
       </header>
 
-      <Glance props={props} readiness={readiness} decisions={decisions} />
+      <Glance props={props} plan={plan} proofMatches={current.proofMatches} readiness={readiness} decisions={decisions} />
+
+      <VersionBar versions={visible} current={current.version} onPick={setPicked} />
 
       {gaps.map((f) => (
         <SaidVsDid key={findingKey(f)} finding={f} plan={plan} sources={sources} decision={decisions[findingKey(f)]} onDecide={(d) => decide(f, d)} />
       ))}
 
       <ReadinessPanel readiness={readiness} />
+
+      <TalkToFix
+        mode={correctionMode}
+        applied={exampleApplied}
+        onExample={() => { setExampleApplied(true); setPicked(null); }}
+        onUndoExample={() => { setExampleApplied(false); setPicked(null); }}
+      />
+
+      {diff && previous && (
+        <DiffPanel diff={diff} from={previous.version} to={current.version} correction={current.correction} sources={sources} plan={plan} decisions={decisions} setDecision={setDecision} />
+      )}
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section aria-labelledby="timeline-h">
@@ -91,7 +141,7 @@ export function SessionView(props: Props) {
         </section>
       </div>
 
-      <SandboxProof proof={props.proof} matches={props.proofMatchesScript} dismissed={Object.values(decisions).includes("dismissed")} />
+      <SandboxProof proof={props.proof} matches={current.proofMatches} version={current.version} dismissed={Object.values(decisions).includes("dismissed")} />
 
       <ArtifactTabs title={plan.title} readiness={readiness} />
 
@@ -434,8 +484,8 @@ function ArtifactTabs({ title, readiness }: { title: string; readiness: Readines
 
 // ---- at a glance -------------------------------------------------------------------------
 
-function Glance({ props, readiness, decisions }: { props: Props; readiness: Readiness; decisions: Record<string, Decision> }) {
-  const { session, plan, proof, proofMatchesScript } = props;
+function Glance({ props, plan, proofMatches: proofMatchesScript, readiness, decisions }: { props: Props; plan: Plan; proofMatches: boolean; readiness: Readiness; decisions: Record<string, Decision> }) {
+  const { session, proof } = props;
   const dropped = session.steps.filter((s) => s.superseded).length;
   const gaps = plan.findings.filter((f) => f.type !== "param_suggest");
   const open = gaps.filter((f) => !decisions[findingKey(f)]).length;
@@ -482,7 +532,7 @@ const EXIT_MEANING: Record<number, string> = {
   5: "rolled back, recovery verified",
 };
 
-function SandboxProof({ proof, matches, dismissed }: { proof: ProofRun | null; matches: boolean; dismissed: boolean }) {
+function SandboxProof({ proof, matches, version, dismissed }: { proof: ProofRun | null; matches: boolean; version: number; dismissed: boolean }) {
   return (
     <section aria-labelledby="proof-h" className="mt-10">
       <h2 id="proof-h" className="text-lg font-semibold">What the sandbox proved</h2>
@@ -500,7 +550,7 @@ function SandboxProof({ proof, matches, dismissed }: { proof: ProofRun | null; m
               ? "You removed a step SayOps added, so this proof no longer describes the plan above."
               : matches
                 ? `Proven script matches the script below (sha256 ${proof.scriptSha256.slice(0, 12)}…).`
-                : "The script below has changed since this proof was recorded. Re-run: npm run proof:ssl -w @sayops/core"}
+                : `This proof was recorded for an earlier version of the script, not plan v${version}. Re-run: npm run proof:ssl -w @sayops/core`}
             {" "}Recorded {new Date(proof.generatedAt).toUTCString()} · Docker {proof.environment.docker} · image {proof.environment.imageId}
           </p>
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -574,5 +624,208 @@ function ScenarioCard({ s }: { s: ProofScenario }) {
         <pre className="mt-1 max-h-72 overflow-auto rounded bg-zinc-50 p-2 font-mono text-[11px] leading-snug dark:bg-zinc-900">{s.log.join("\n")}</pre>
       </details>
     </article>
+  );
+}
+
+// ---- versions + talk-to-fix ----------------------------------------------------------------
+
+function VersionBar({ versions, current, onPick }: { versions: VersionInfo[]; current: number; onPick: (v: number) => void }) {
+  if (versions.length < 2) return null;
+  return (
+    <nav aria-label="Plan versions" className="mt-6 flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-zinc-500">Plan versions:</span>
+      {versions.map((v) => (
+        <button
+          key={v.version}
+          type="button"
+          aria-pressed={v.version === current}
+          onClick={() => onPick(v.version)}
+          className={`rounded-full border px-3 py-1 ${v.version === current ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"}`}
+        >
+          v{v.version} · {v.correction ? `X${v.correction.seq} “${v.correction.text.slice(0, 40)}${v.correction.text.length > 40 ? "…" : ""}”` : "compiled"}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function TalkToFix({ mode, applied, onExample, onUndoExample }: {
+  mode: CorrectionMode;
+  applied: boolean;
+  onExample: () => void;
+  onUndoExample: () => void;
+}) {
+  const [text, setText] = useState(mode.kind === "example" ? mode.text : "");
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [pending, start] = useTransition();
+  if (mode.kind === "none") return null;
+  const isExample = mode.kind === "example";
+  const differs = isExample && text.trim() !== mode.text;
+
+  const submit = () => {
+    setResult(null);
+    if (mode.kind === "example") {
+      if (differs) {
+        setResult({ ok: false, message: "This public demo only has the recorded example. Live corrections run on your machine: sayops fix, or the box on a local session." });
+        return;
+      }
+      onExample();
+      return;
+    }
+    if (mode.kind === "local") {
+      start(async () => {
+        const r = await mode.apply(text);
+        setResult(r.ok ? { ok: true, message: `Saved as plan v${r.version}. The changes are shown below.` } : { ok: false, message: r.error });
+        if (r.ok) setText("");
+      });
+    }
+  };
+
+  return (
+    <section aria-labelledby="fix-h" className="mt-8 rounded-2xl border border-zinc-200 p-5 dark:border-zinc-800">
+      <h2 id="fix-h" className="text-lg font-semibold">Talk to fix it</h2>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        Click the box, hold your Wispr Flow key and say what should change. SayOps recompiles with your correction, keeps the old
+        version, and shows exactly what changed. Anything it adds waits for your review.
+      </p>
+      {isExample && (
+        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+          Recorded example: this correction was compiled live by {mode.model} on {new Date(mode.recordedAt).toUTCString()}. This
+          public page does not call the AI; it shows that recorded result.
+        </p>
+      )}
+      <label htmlFor="fix-text" className="sr-only">Correction</label>
+      <textarea
+        id="fix-text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={2}
+        maxLength={1000}
+        placeholder="e.g. also post to Slack when it's done, and run this every Monday at 9"
+        className="mt-3 w-full rounded-lg border border-zinc-300 bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {isExample && applied ? (
+          <>
+            <span className="text-sm text-emerald-800 dark:text-emerald-300">Applied: plan v2 is shown below.</span>
+            <button type="button" onClick={() => { onUndoExample(); setResult(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700">Back to v1</button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={submit}
+            disabled={pending || !text.trim()}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            {pending ? "Recompiling…" : "Apply correction"}
+          </button>
+        )}
+        {result && (
+          <p role="status" className={`text-sm ${result.ok ? "text-emerald-800 dark:text-emerald-300" : "text-red-800 dark:text-red-300"}`}>{result.message}</p>
+        )}
+      </div>
+      {mode.kind === "local" && mode.failed.length > 0 && (
+        <details className="mt-3 text-xs text-zinc-500">
+          <summary className="cursor-pointer">{mode.failed.length} correction(s) could not be applied (the plan was kept)</summary>
+          <ul className="mt-1 list-disc pl-5">{mode.failed.map((f) => <li key={f.seq}>X{f.seq} “{f.text}”: {f.error}</li>)}</ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function Cause({ ids, sources }: { ids: string[]; sources: Record<string, string> }) {
+  if (!ids.length) return null;
+  return (
+    <span className="text-xs text-zinc-500">
+      {" "}← {ids.map((id) => <span key={id}><span className="font-mono">{id}</span>{sources[id] ? ` “${sources[id]}”` : ""}</span>)}
+    </span>
+  );
+}
+
+/** Keep / Remove for something a correction added; nothing to show when it needs no review. */
+function ReviewButtons({ reviewKey, decisions, setDecision }: {
+  reviewKey: string | undefined;
+  decisions: Record<string, Decision>;
+  setDecision: (key: string, d: Decision | null) => void;
+}) {
+  if (!reviewKey) return null;
+  const d = decisions[reviewKey];
+  return d ? (
+    <span className="ml-2 text-xs">
+      {d === "accepted" ? "kept" : "removed"} · <button type="button" className="underline" onClick={() => setDecision(reviewKey, null)}>undo</button>
+    </span>
+  ) : (
+    <span className="ml-2 inline-flex gap-1">
+      <button type="button" onClick={() => setDecision(reviewKey, "accepted")} className="rounded border border-zinc-400 px-2 py-0.5 text-xs hover:bg-white dark:hover:bg-zinc-900">Keep</button>
+      <button type="button" onClick={() => setDecision(reviewKey, "dismissed")} className="rounded border border-zinc-400 px-2 py-0.5 text-xs hover:bg-white dark:hover:bg-zinc-900">Remove</button>
+    </span>
+  );
+}
+
+function DiffPanel({ diff, from, to, correction, sources, plan, decisions, setDecision }: {
+  diff: PlanDiff;
+  from: number;
+  to: number;
+  correction: Correction | null;
+  sources: Record<string, string>;
+  plan: Plan;
+  decisions: Record<string, Decision>;
+  setDecision: (key: string, d: Decision | null) => void;
+}) {
+  const additions = new Map(correctionAdditions(plan).map((a) => [a.stepId ?? "schedule", a.key]));
+  const row = "rounded-lg px-3 py-2 text-sm";
+  return (
+    <section aria-labelledby="diff-h" className="mt-6 rounded-2xl border-2 border-sky-300 bg-sky-50/50 p-5 dark:border-sky-800 dark:bg-sky-950/20">
+      <h2 id="diff-h" className="text-lg font-semibold">What changed: v{from} → v{to}</h2>
+      {correction && (
+        <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+          Because you said <span className="font-mono text-xs">X{correction.seq}</span> “{correction.text}”
+        </p>
+      )}
+      {diff.empty ? (
+        <p className="mt-3 text-sm text-zinc-500">No change to the plan.</p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {diff.steps.added.map((s) => (
+            <li key={`a${s.id}`} className={`${row} bg-emerald-50 dark:bg-emerald-950/40`}>
+              <b className="text-emerald-800 dark:text-emerald-300">+ added {s.id}</b> {s.intent}
+              <ReviewButtons reviewKey={additions.get(s.id)} decisions={decisions} setDecision={setDecision} />
+              <code className="mt-1 block break-all font-mono text-xs">{s.run}</code>
+              <Cause ids={s.causes} sources={sources} />
+            </li>
+          ))}
+          {diff.steps.changed.map((s) => (
+            <li key={`c${s.id}`} className={`${row} bg-amber-50 dark:bg-amber-950/40`}>
+              <b className="text-amber-800 dark:text-amber-300">~ changed {s.id}</b> {s.intent} ({s.fields!.join("; ")})
+              <Cause ids={s.causes} sources={sources} />
+            </li>
+          ))}
+          {diff.steps.removed.map((s) => (
+            <li key={`r${s.id}`} className={`${row} bg-red-50 dark:bg-red-950/40`}>
+              <b className="text-red-800 dark:text-red-300">− removed {s.id}</b> {s.intent}
+              <code className="mt-1 block break-all font-mono text-xs">{s.run}</code>
+            </li>
+          ))}
+          {diff.schedule && (
+            <li className={`${row} bg-emerald-50 dark:bg-emerald-950/40`}>
+              <b className="text-emerald-800 dark:text-emerald-300">~ schedule</b> {diff.schedule.from ?? "none"} → <code className="font-mono">{diff.schedule.to ?? "none"}</code>{" "}
+              <span className="text-xs text-zinc-500">(cron, UTC; the GitHub workflow now runs on this schedule)</span>
+              <ReviewButtons reviewKey={additions.get("schedule")} decisions={decisions} setDecision={setDecision} />
+              <Cause ids={diff.schedule.causes} sources={sources} />
+            </li>
+          )}
+          {diff.params.added.map((p) => <li key={`pa${p}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>+ parameter <code className="font-mono">{p}</code></li>)}
+          {diff.params.removed.map((p) => <li key={`pr${p}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>− parameter <code className="font-mono">{p}</code></li>)}
+          {[...diff.rollback.added.map((c) => ["+ rollback", c] as const), ...diff.verify.added.map((c) => ["+ check", c] as const)].map(([label, c]) => (
+            <li key={`${label}${c.run}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>{label} <code className="break-all font-mono text-xs">{c.run}</code><Cause ids={c.causes} sources={sources} /></li>
+          ))}
+          {[...diff.rollback.removed.map((c) => ["− rollback", c] as const), ...diff.verify.removed.map((c) => ["− check", c] as const)].map(([label, c]) => (
+            <li key={`${label}${c.run}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>{label} <code className="break-all font-mono text-xs">{c.run}</code></li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">Everything else is unchanged. Earlier versions are kept; pick one above to compare.</p>
+    </section>
   );
 }

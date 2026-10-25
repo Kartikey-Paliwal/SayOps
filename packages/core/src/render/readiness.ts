@@ -78,14 +78,35 @@ export function findingKey(f: Finding): string {
   return `${f.type}:${f.fix_step ?? f.sources.join("+")}`;
 }
 
-/** Dismissing a finding removes the step SayOps added for it; everything is re-validated after. */
+/** Review key for something a correction added: a step ("correction:S7") or the schedule. */
+export function correctionKey(target: string): string {
+  return `correction:${target}`;
+}
+
+/** Steps added because of a correction (cite an X id) that no finding already asks about. */
+export function correctionAdditions(plan: Plan): { key: string; stepId: string | null; text: string }[] {
+  const viaFinding = new Set(plan.findings.map((f) => f.fix_step).filter(Boolean));
+  const out = plan.steps
+    .filter((s) => s.added && !viaFinding.has(s.id) && s.sources.some((id) => id.startsWith("X")))
+    .map((s) => ({ key: correctionKey(s.id), stepId: s.id as string | null, text: `Confirm step ${s.id} added from your correction: ${s.intent}` }));
+  if (plan.schedule?.why.startsWith("X")) {
+    out.push({ key: correctionKey("schedule"), stepId: null, text: `Confirm the schedule added from your correction: cron "${plan.schedule.cron}" (UTC)` });
+  }
+  return out;
+}
+
+/** Dismissing a finding or a correction's addition removes what SayOps added; everything is re-validated after. */
 export function applyReview(plan: Plan, decisions: Record<string, Decision>): Plan {
   const dismissed = plan.findings.filter((f) => decisions[findingKey(f)] === "dismissed");
   const dropSteps = new Set(dismissed.map((f) => f.fix_step).filter((id): id is string => Boolean(id)));
+  for (const a of correctionAdditions(plan)) {
+    if (decisions[a.key] === "dismissed" && a.stepId) dropSteps.add(a.stepId);
+  }
   return {
     ...plan,
     steps: plan.steps.filter((s) => !(dropSteps.has(s.id) && s.added)),
     findings: plan.findings.filter((f) => !dismissed.includes(f)),
+    schedule: decisions[correctionKey("schedule")] === "dismissed" ? null : plan.schedule,
   };
 }
 
@@ -135,6 +156,9 @@ export function assessReadiness(input: {
     } else if (f.fix_step && decisions[key] !== "accepted") {
       reviews.push({ key, text: `Confirm step ${f.fix_step} that SayOps added: ${f.detail}` });
     }
+  }
+  for (const a of correctionAdditions(plan)) {
+    if (decisions[a.key] !== "accepted") reviews.push({ key: a.key, text: a.text });
   }
   const ctx: RenderContext = { sessionId: input.sessionId, version: input.version, sources: sourceTexts(input.session, input.corrections) };
   const artifacts = renderAll(plan, ctx);

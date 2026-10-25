@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { SessionView } from "./session-view";
+import { SessionView, type VersionInfo } from "./session-view";
 
 export function generateStaticParams() {
   return SEEDS.map((s) => ({ id: s.id }));
@@ -31,9 +31,17 @@ async function Session({ params }: { params: PageProps<"/s/[id]">["params"] }) {
   // cached compile, so this page needs no LLM key.
   const { events, count } = redactEvents(seed.events);
   const session = align(events);
-  // The recorded proof only counts if it was made with exactly the script this page generates.
-  const script = renderScript(seed.plan, { sessionId: seed.id, version: 1, sources: sourceTexts(session) });
-  const scriptSha256 = createHash("sha256").update(script).digest("hex");
+  const ex = seed.correction;
+  const corrections = ex ? [ex.correction] : [];
+  // The recorded proof only counts for a version whose script is byte-identical to the one proven.
+  const proves = (plan: typeof seed.plan, version: number) =>
+    seed.proof?.scriptSha256 ===
+    createHash("sha256").update(renderScript(plan, { sessionId: seed.id, version: 1, sources: sourceTexts(session, corrections) })).digest("hex") &&
+    version === 1;
+  const versions: VersionInfo[] = [
+    { version: 1, plan: seed.plan, correction: null, model: "seeded", at: "", proofMatches: proves(seed.plan, 1) },
+    ...(ex ? [{ version: 2, plan: ex.plan, correction: ex.correction, model: ex.model, at: ex.recordedAt, proofMatches: proves(ex.plan, 2) }] : []),
+  ];
 
   return (
     <SessionView
@@ -44,9 +52,10 @@ async function Session({ params }: { params: PageProps<"/s/[id]">["params"] }) {
       redacted={count}
       narrationCount={events.filter((e) => e.kind === "narration").length}
       session={session}
-      plan={seed.plan}
+      versions={versions}
+      corrections={corrections}
+      correctionMode={ex ? { kind: "example", text: ex.correction.text, recordedAt: ex.recordedAt, model: ex.model } : { kind: "none" }}
       proof={seed.proof}
-      proofMatchesScript={seed.proof?.scriptSha256 === scriptSha256}
     />
   );
 }

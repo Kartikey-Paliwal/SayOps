@@ -44,7 +44,8 @@ describe.skipIf(!ZSH || !existsSync(BIN))("zsh hook (real shell)", () => {
     expect(r.all).toContain("↳ N1 explains C2: false");
     const id = only();
     const { events } = readEvents(home, id);
-    const cmds = events.flatMap((e) => (e.kind === "command" ? [[e.seq, e.cmd, e.exit]] : []));
+    // Each command is written by its own background process, so file order can vary; seq and time are what count.
+    const cmds = events.flatMap((e) => (e.kind === "command" ? [[e.seq, e.cmd, e.exit]] : [])).sort((a, b) => Number(a[0]) - Number(b[0]));
     expect(cmds).toEqual([[1, "echo ok", 0], [2, "false", 1], [3, "printf '%s\\n' \"it's quoted\" | cat", 0]]);
     expect(JSON.stringify(events)).not.toContain("private-command");
     expect(cmds.some(([, c]) => String(c).includes("sayops"))).toBe(false);

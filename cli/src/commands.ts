@@ -1,11 +1,11 @@
 import {
-  align, assessReadiness, CompileError, compile, groq, LlmError, redactText, SessionUpload,
-  type AlignedSession, type CommandEvent, type NarrationEvent,
+  align, assessReadiness, CompileError, compile, formatDiff, groq, LlmError, redactText, SessionUpload, sourceTexts,
+  type AlignedSession, type CommandEvent, type JsonLlm, type NarrationEvent,
 } from "@sayops/core";
 import {
-  alignOverrides, appendEvent, appendRedactions, countRedactions, currentId, ensureHome, listSessions, newSessionId,
-  pendingMarkers, readEvents, readPlan, readSession, readUpload, sessionDir, setCurrent, StoreError, writeFileAtomic,
-  writeSession, type StoredSession,
+  alignOverrides, appendEvent, appendRedactions, applyCorrection, appliedCorrections, CorrectionFailed, countRedactions,
+  currentId, ensureHome, listPlanVersions, listSessions, newSessionId, pendingMarkers, readEvents, readPlan, readSession,
+  readUpload, savePlanVersion, sessionDir, setCurrent, StoreError, writeFileAtomic, writeSession, type StoredSession,
 } from "@sayops/core/store";
 import { existsSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +20,10 @@ export interface Ctx {
   /** whole stdin (only read when a command needs it) */
   stdin: () => string;
   sleep: (ms: number) => void;
+  /** one line typed at an interactive prompt (null at end of input) */
+  readLine?: (prompt: string) => string | null;
+  /** model override (tests); otherwise Groq with GROQ_API_KEY */
+  llm?: JsonLlm;
 }
 
 export class CliError extends Error {
@@ -253,6 +257,20 @@ export function list(ctx: Ctx): string[] {
 
 // ---- compile ---------------------------------------------------------------------------------
 
+/** GROQ_API_KEY from the environment or an --env-file; ctx.llm (tests) wins. */
+async function modelFor(ctx: Ctx, envFile?: string): Promise<JsonLlm> {
+  if (ctx.llm) return ctx.llm;
+  const env = { ...ctx.env };
+  if (envFile) {
+    if (!existsSync(envFile)) throw usage(`env file not found: ${envFile}`);
+    const { parseEnv } = await import("node:util");
+    const { readFileSync } = await import("node:fs");
+    Object.assign(env, parseEnv(readFileSync(envFile, "utf8")));
+  }
+  if (!env.GROQ_API_KEY) throw new CliError("GROQ_API_KEY is not set. Pass --env-file ~/Desktop/sayops/.env or export it.");
+  return groq({ apiKey: env.GROQ_API_KEY, model: env.LLM_MODEL || undefined });
+}
+
 export async function compileSession(ctx: Ctx, opts: { id?: string; envFile?: string }) {
   const id = resolveId(ctx, opts.id);
   const s = readSession(ctx.home, id);
@@ -261,26 +279,46 @@ export async function compileSession(ctx: Ctx, opts: { id?: string; envFile?: st
   if (!upload) throw new CliError(`session ${id} has no upload.json; it was not stopped cleanly`);
   if (!upload.events.some((e) => e.kind === "command")) throw new CliError(`session ${id} recorded no commands, so there is nothing to compile`);
 
-  const env = { ...ctx.env };
-  if (opts.envFile) {
-    if (!existsSync(opts.envFile)) throw usage(`env file not found: ${opts.envFile}`);
-    const { parseEnv } = await import("node:util");
-    const { readFileSync } = await import("node:fs");
-    Object.assign(env, parseEnv(readFileSync(opts.envFile, "utf8")));
-  }
-  if (!env.GROQ_API_KEY) throw new CliError("GROQ_API_KEY is not set. Pass --env-file ~/Desktop/sayops/.env or export it.");
-
+  const llm = await modelFor(ctx, opts.envFile);
   const aligned = align(upload.events, { overrides: alignOverrides(s) });
+  const corrections = appliedCorrections(ctx.home, id);
   try {
-    const r = await compile(groq({ apiKey: env.GROQ_API_KEY, model: env.LLM_MODEL || undefined }), { title: s.title, session: aligned });
-    const dir = sessionDir(ctx.home, id);
-    writeFileAtomic(join(dir, "plan.json"), `${JSON.stringify(r.plan, null, 2)}\n`);
-    writeFileAtomic(join(dir, "compile.json"), `${JSON.stringify({ model: r.model, attempts: r.attempts, usage: r.usage, radarHits: r.radarHits, at: ctx.now().toISOString() }, null, 2)}\n`);
-    const readiness = assessReadiness({ plan: r.plan, session: aligned, sessionId: id, version: 1 });
-    return { id, plan: r.plan, model: r.model, attempts: r.attempts, readiness };
+    const r = await compile(llm, { title: s.title, session: aligned, corrections });
+    const v = savePlanVersion(ctx.home, id, r.plan, { source: "compile", correction: null, model: r.model, attempts: r.attempts, at: ctx.now().toISOString() });
+    writeFileAtomic(join(sessionDir(ctx.home, id), "compile.json"), `${JSON.stringify({ model: r.model, attempts: r.attempts, usage: r.usage, radarHits: r.radarHits, at: ctx.now().toISOString() }, null, 2)}\n`);
+    const readiness = assessReadiness({ plan: r.plan, session: aligned, corrections, sessionId: id, version: v.version });
+    return { id, plan: r.plan, model: r.model, attempts: r.attempts, readiness, version: v.version };
   } catch (e) {
     if (e instanceof CompileError) throw new CliError(`the compiler could not produce a valid plan:\n- ${e.errors.join("\n- ")}`);
     if (e instanceof LlmError) throw new CliError(`the model call failed: ${e.message}${e.retryAfterS ? ` (retry in ${e.retryAfterS}s)` : ""}`);
     throw e;
   }
 }
+
+// ---- fix (talk-to-fix) -------------------------------------------------------------------------
+
+export async function fixSession(ctx: Ctx, opts: { id?: string; text: string; envFile?: string }) {
+  const id = resolveId(ctx, opts.id);
+  const s = readSession(ctx.home, id);
+  if (s.status === "recording") throw new CliError(`session ${id} is still recording. Run "sayops stop" first.`);
+  if (!listPlanVersions(ctx.home, id).length) throw new CliError(`session ${id} has not been compiled yet. Run: sayops compile ${id}`);
+  if (!opts.text.trim()) throw usage('the correction is empty. Say what should change, e.g. sayops fix "also post to Slack when it is done"');
+  const llm = await modelFor(ctx, opts.envFile);
+  try {
+    const r = await applyCorrection({ home: ctx.home, id, text: opts.text, llm, now: ctx.now });
+    const upload = readUpload(ctx.home, id)!;
+    const aligned = align(upload.events, { overrides: alignOverrides(readSession(ctx.home, id)) });
+    const corrections = appliedCorrections(ctx.home, id);
+    const readiness = assessReadiness({ plan: r.next.plan, session: aligned, corrections, sessionId: id, version: r.next.version });
+    return { id, ...r, readiness, sources: sourceTexts(aligned, corrections) };
+  } catch (e) {
+    if (e instanceof CorrectionFailed) {
+      throw new CliError(`the correction could not be applied, so v${listPlanVersions(ctx.home, id).at(-1)!.version} is still the latest plan.\n  Reason: ${e.message}`);
+    }
+    if (e instanceof LlmError) throw new CliError(`the model call failed: ${e.message}${e.retryAfterS ? ` (retry in ${e.retryAfterS}s)` : ""}`);
+    if (e instanceof StoreError) throw new CliError(e.message, e.code === "invalid" ? 2 : 1);
+    throw e;
+  }
+}
+
+export { formatDiff };

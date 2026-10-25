@@ -3,6 +3,7 @@ import type { Plan } from "../schemas";
 /** Reference plan for the SSL seed: what a correct compile produces. Cached for judge mode. */
 export const sslRenewPlan: Plan = {
   title: "Renew SSL certificate",
+  schedule: null,
   remote_host: "HOST",
   params: [
     { name: "HOST", from: "web-1", why: "N1", validate: "^[a-zA-Z0-9.-]+$" },

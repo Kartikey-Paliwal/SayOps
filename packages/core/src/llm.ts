@@ -36,6 +36,8 @@ export function groq(opts: {
   reasoningEffort?: "low" | "medium" | "high";
   /** includes reasoning tokens; keep prompt + this under the free tier's 8K tokens/minute */
   maxCompletionTokens?: number;
+  /** prompt + reply must fit in this many tokens (Groq counts both against tokens/minute) */
+  tokenBudget?: number;
 }): JsonLlm {
   const model = opts.model ?? "openai/gpt-oss-120b";
   const url = `${opts.baseUrl ?? "https://api.groq.com/openai/v1"}/chat/completions`;
@@ -48,7 +50,7 @@ export function groq(opts: {
         model,
         temperature: 0,
         reasoning_effort: opts.reasoningEffort ?? "low",
-        max_completion_tokens: opts.maxCompletionTokens ?? 5500,
+        max_completion_tokens: replyBudget(system + user + JSON.stringify(schema), opts),
         include_reasoning: false,
         messages: [
           { role: "system", content: system },
@@ -78,4 +80,11 @@ export function groq(opts: {
     if (!content) throw new LlmError("LLM returned an empty message");
     return { content, model: data.model, usage: data.usage };
   };
+}
+
+/** Reply tokens left after a rough prompt estimate (~3.5 characters per token), within [2500, max]. */
+export function replyBudget(prompt: string, opts: { maxCompletionTokens?: number; tokenBudget?: number } = {}): number {
+  const max = opts.maxCompletionTokens ?? 5500;
+  const left = (opts.tokenBudget ?? 7800) - Math.ceil(prompt.length / 3.5);
+  return Math.max(2500, Math.min(max, left));
 }

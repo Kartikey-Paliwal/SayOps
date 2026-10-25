@@ -113,6 +113,16 @@ sayops compile --env-file ~/Desktop/sayops/.env
 Then, with the web app running (`cd ~/Desktop/sayops && npm run dev -w web -- -p 3100`), open the
 `http://localhost:3100/local/<id>` link it prints.
 
+## 5b. Talk to fix it (optional, great for the video)
+
+```bash
+sayops fix --env-file ~/Desktop/sayops/.env
+```
+
+At the `fix>` prompt, hold fn and say a change, e.g. *"also print a message when it's done, and run this
+every Monday at 9"*. SayOps saves plan v2 and prints exactly what changed. The same box is on the
+`/local/<id>` page.
+
 ## 6. Undo the task
 
 ```bash

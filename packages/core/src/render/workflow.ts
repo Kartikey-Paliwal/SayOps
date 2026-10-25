@@ -39,11 +39,23 @@ export function renderWorkflow(plan: Plan, ctx: RenderContext): string {
       );
     }
   }
+  if (plan.schedule) {
+    const said = ctx.sources[plan.schedule.why];
+    L.push(
+      `  # From ${plan.schedule.why}${said ? `: "${oneLine(said, 90).replace(/"/g, "'")}"` : ""} (GitHub runs cron in UTC)`,
+      "  schedule:",
+      `    - cron: ${y(plan.schedule.cron)}`,
+      "",
+    );
+  } else {
+    L.push(
+      "  # Add a schedule after a manual run has passed, e.g.:",
+      "  # schedule:",
+      '  #   - cron: "0 9 * * 1"',
+      "",
+    );
+  }
   L.push(
-    "  # Add a schedule after a manual run has passed, e.g.:",
-    "  # schedule:",
-    '  #   - cron: "0 9 * * 1"',
-    "",
     "permissions:",
     "  contents: read",
     "",
