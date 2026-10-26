@@ -6,7 +6,7 @@ import {
   type ProofRun, type ProofScenario, type Readiness, type ReasonExample, type SessionEvent,
 } from "@sayops/core";
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { SayItResult } from "./actions";
 
 export interface VersionInfo {
@@ -39,6 +39,8 @@ export interface SayItConfig {
   /** a model key is configured on the server */
   live: boolean;
   run: (seedId: string, commandSeq: number, text: string) => Promise<SayItResult>;
+  /** asks the server at request time whether live mode is available */
+  status?: () => Promise<{ live: boolean }>;
 }
 
 export type CorrectionMode =
@@ -904,6 +906,12 @@ function SayItYourself({ config, active, onResult, onReset }: {
   const [text, setText] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
+  const [live, setLive] = useState(config.live);
+  useEffect(() => {
+    let alive = true;
+    config.status?.().then((s) => alive && setLive(s.live)).catch(() => {});
+    return () => { alive = false; };
+  }, [config]);
 
   /** Rebuilds the same timeline the server compiled (deterministic) and hands back a version. */
   const show = (commandSeq: number, sentence: string, plan: Plan, kind: NarrationKind | null, recorded: { model: string; at: string } | null) => {
@@ -974,7 +982,7 @@ function SayItYourself({ config, active, onResult, onReset }: {
         <button
           type="button"
           onClick={submit}
-          disabled={pending || !text.trim() || !config.live}
+          disabled={pending || !text.trim() || !live}
           className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-50"
         >
           {pending ? "Compiling your reason… (5–15 s)" : "Turn it into automation"}
@@ -984,7 +992,7 @@ function SayItYourself({ config, active, onResult, onReset }: {
             Back to the original
           </button>
         )}
-        {!config.live && <span className="text-xs text-zinc-500">Live mode is off on this site right now; the recorded examples below still work.</span>}
+        {!live && <span className="text-xs text-zinc-500">Live mode is off on this site right now; the recorded examples below still work.</span>}
         {msg && <p role="status" className={`text-sm ${msg.ok ? "text-emerald-800 dark:text-emerald-300" : "text-red-800 dark:text-red-300"}`}>{msg.text}</p>}
       </div>
 

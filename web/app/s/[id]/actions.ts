@@ -79,3 +79,8 @@ export async function sayItYourselfAction(seedId: string, commandSeq: number, te
 function capitalise(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+/** Checked at request time (not build time), so adding the key in Vercel takes effect without a code change. */
+export async function sayItStatusAction(): Promise<{ live: boolean }> {
+  return { live: Boolean(process.env.GROQ_API_KEY) };
+}

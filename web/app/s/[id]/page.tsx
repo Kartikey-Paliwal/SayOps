@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { sayItYourselfAction } from "./actions";
+import { sayItStatusAction, sayItYourselfAction } from "./actions";
 import { SessionView, type VersionInfo } from "./session-view";
 
 // A live "say it yourself" compile takes ~5–15 s; give the server action room.
@@ -67,6 +67,7 @@ async function Session({ params }: { params: PageProps<"/s/[id]">["params"] }) {
         examples: seed.reasons,
         live: Boolean(process.env.GROQ_API_KEY),
         run: sayItYourselfAction,
+        status: sayItStatusAction,
       }}
     />
   );
