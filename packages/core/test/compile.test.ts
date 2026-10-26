@@ -72,11 +72,20 @@ describe("validatePlan", () => {
     expect(!v.ok && v.errors.join()).toContain("without the ssh wrapper");
   });
 
-  it("requires every narration to be classified", () => {
+  it("classifies a narration the model forgot to list, from the step that uses it", () => {
     const p = clone(sslRenewPlan);
     p.narrations = p.narrations.filter((n) => n.id !== "N5");
     const v = validatePlan(p, session);
-    expect(!v.ok && v.errors.join()).toContain("N5 is missing");
+    expect(v.ok && v.plan.narrations.some((n) => n.id === "N5")).toBe(true);
+  });
+
+  it("requires every narration to be classified or used", () => {
+    const p = clone(sslRenewPlan);
+    p.narrations = p.narrations.filter((n) => n.id !== "N4");
+    p.findings = [];
+    p.steps = p.steps.map((s) => ({ ...s, sources: s.sources.filter((x) => x !== "N4") }));
+    const v = validatePlan(p, session);
+    expect(!v.ok && v.errors.join()).toContain("N4 is missing");
   });
 });
 

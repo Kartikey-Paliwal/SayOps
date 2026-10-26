@@ -144,3 +144,36 @@ describe("Throttle / LruCache", () => {
     expect([c.get("a"), c.get("b"), c.get("c")]).toEqual([1, undefined, 3]);
   });
 });
+
+describe("tolerating harmless model slips", () => {
+  const r = withSpokenReason(sslRenewEvents, 5, "if the config test fails, email me the error output");
+  const session = align(r.events, { overrides: r.overrides });
+
+  it("renumbers a step id like S5a and keeps finding links pointing at the same step", () => {
+    const p = clone(sslRenewPlan);
+    p.narrations.push({ id: "N8", kind: "rollback" });
+    p.steps.splice(5, 0, { id: "S5a", intent: "Email the error", run: 'printf "%s" "$ERR" | mail -s "nginx -t failed" "$OPS_EMAIL"', remote: true, sources: ["N8"], added: true, condition: null, on_fail: "continue", risk: "LOW" });
+    p.findings[0].fix_step = "S3";
+    p.params.push({ name: "OPS_EMAIL", from: "<REQUIRED>", why: "N8", validate: null });
+    const v = validatePlan(p, session);
+    expect(v.ok ? [] : v.errors).toEqual([]);
+    if (v.ok) {
+      expect(v.plan.steps.map((s) => s.id)).toEqual(["S1", "S2", "S3", "S4", "S5", "S6", "S7"]);
+      expect(v.plan.steps[5].intent).toBe("Email the error");
+      expect(v.plan.findings[0].fix_step).toBe("S3");
+    }
+  });
+
+  it("classifies a narration the plan uses but forgot to list, from how it is used", () => {
+    const p = clone(sslRenewPlan);
+    p.verify.push({ run: "true", remote: false, why: "N8" });
+    const v = validatePlan(p, session);
+    expect(v.ok ? [] : v.errors).toEqual([]);
+    if (v.ok) expect(v.plan.narrations.find((n) => n.id === "N8")?.kind).toBe("verify");
+  });
+
+  it("still rejects a narration that nothing uses and nothing classifies", () => {
+    const v = validatePlan(clone(sslRenewPlan), session);
+    expect(!v.ok && v.errors.join()).toContain('narration N8 is missing from "narrations"');
+  });
+});

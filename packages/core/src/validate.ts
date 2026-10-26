@@ -109,13 +109,30 @@ export function validatePlan(raw: unknown, session: AlignedSession, corrections:
       errors.push(`${n.id} is a verification but nothing checks it; add a "verify" command citing ${n.id}`);
     }
   }
-  // Every narration should be classified exactly once.
+  // Every narration should be classified exactly once. One the plan uses but forgot to list gets the
+  // kind its use implies; only a narration that nothing uses and nothing classifies is an error.
   const classified = new Set(plan.narrations.map((n) => n.id));
   for (const id of known) {
-    if (id.startsWith("N") && !classified.has(id)) errors.push(`narration ${id} is missing from "narrations"`);
+    if (!id.startsWith("N") || classified.has(id)) continue;
+    const kind = impliedKind(plan, id);
+    if (kind) plan.narrations.push({ id, kind });
+    else errors.push(`narration ${id} is missing from "narrations"`);
   }
 
   return errors.length ? { ok: false, errors } : { ok: true, plan };
+}
+
+/** How a plan uses a narration it forgot to classify, if it uses it at all. */
+function impliedKind(plan: Plan, id: string): Plan["narrations"][number]["kind"] | null {
+  if (plan.steps.some((s) => s.condition?.why === id)) return "condition";
+  if (plan.verify.some((v) => v.why === id)) return "verify";
+  if (plan.rollback.some((r) => r.why === id)) return "rollback";
+  if (plan.schedule?.why === id || plan.params.some((p) => p.why === id)) return "param_hint";
+  if (plan.findings.some((f) => f.type === "said_not_done" && f.sources.includes(id))) return "claim";
+  if (plan.findings.some((f) => f.type === "unguarded_warning" && f.sources.includes(id))) return "warning";
+  if (plan.steps.some((s) => s.sources.includes(id) && s.added && s.on_fail !== "continue")) return "guard";
+  if (plan.steps.some((s) => s.sources.includes(id))) return "reason";
+  return null;
 }
 
 /** Names from `names` referenced as $NAME/${NAME} inside a single-quoted part of a shell command. */
@@ -190,16 +207,26 @@ function normalize(raw: unknown): unknown {
     .map((n) => ({ ...n, id: normalizeId(n.id) }))
     .filter((n) => typeof n.id === "string" && /^N\d+$/.test(n.id) && !seen.has(n.id) && seen.add(n.id));
 
+  // Step ids like "S5a" or duplicates: renumber S1..Sn in order and remap the findings that point at them.
+  const rawSteps = list(p.steps);
+  const stepIds = rawSteps.map((x) => normalizeId(x.id));
+  const needsRenumber =
+    rawSteps.length > 0 && (stepIds.some((id) => typeof id !== "string" || !/^S\d+$/.test(id)) || new Set(stepIds).size !== stepIds.length);
+  const remap = new Map<unknown, string>();
+  if (needsRenumber) rawSteps.forEach((x, i) => { if (!remap.has(x.id)) remap.set(x.id, `S${i + 1}`); });
+  const stepId = (x: Any, i: number) => (needsRenumber ? `S${i + 1}` : normalizeId(x.id));
+  const fixStep = (v: unknown) => (needsRenumber && remap.has(v) ? remap.get(v) : normalizeId(v));
+
   return {
     ...p,
     remote_host: bare(p.remote_host),
     params: Array.isArray(p.params) ? list(p.params).map((x) => withWhy({ ...x, name: bare(x.name) })) : p.params,
     narrations: Array.isArray(p.narrations) ? narrations : p.narrations,
     steps: Array.isArray(p.steps)
-      ? list(p.steps).map((x) => ({
+      ? rawSteps.map((x, i) => ({
           ...x,
           run: typeof x.run === "string" ? normalizeBackups(x.run) : x.run,
-          id: normalizeId(x.id),
+          id: stepId(x, i),
           sources: ids(x.sources),
           condition: x.condition && typeof x.condition === "object" ? withWhy(x.condition as Any) : x.condition,
         }))
@@ -209,7 +236,7 @@ function normalize(raw: unknown): unknown {
       : p.rollback,
     verify: Array.isArray(p.verify) ? list(p.verify).map(withWhy) : p.verify,
     findings: Array.isArray(p.findings)
-      ? list(p.findings).map((f) => ({ ...f, sources: ids(f.sources), fix_step: normalizeId(f.fix_step) }))
+      ? list(p.findings).map((f) => ({ ...f, sources: ids(f.sources), fix_step: fixStep(f.fix_step) }))
       : p.findings,
   };
 }
