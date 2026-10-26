@@ -3,6 +3,7 @@ import { sslRenewEvents, sslRenewMeta } from "./ssl-renew";
 import { sslRenewPlan } from "./ssl-renew.plan";
 import { sslRenewProof } from "./ssl-renew.proof";
 import { sslRenewCorrection, type CorrectionExample } from "./ssl-renew.correction";
+import { sslRenewReasons, type ReasonExample } from "./ssl-renew.reasons";
 import type { ProofRun } from "../proof";
 
 export interface Seed {
@@ -17,6 +18,8 @@ export interface Seed {
   proof: ProofRun | null;
   /** a real talk-to-fix result recorded from a live compile, shown as an example */
   correction: CorrectionExample | null;
+  /** real "say it yourself" results recorded from live compiles, offered as one-click examples */
+  reasons: ReasonExample[];
 }
 
 export const SEEDS: Seed[] = [
@@ -28,6 +31,7 @@ export const SEEDS: Seed[] = [
     summary: "Renew an expiring certificate on a web server: stop nginx, renew, test the config, start, check the site.",
     proof: sslRenewProof,
     correction: sslRenewCorrection,
+    reasons: sslRenewReasons,
   },
 ];
 

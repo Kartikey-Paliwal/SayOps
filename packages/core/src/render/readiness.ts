@@ -83,14 +83,24 @@ export function correctionKey(target: string): string {
   return `correction:${target}`;
 }
 
-/** Steps added because of a correction (cite an X id) that no finding already asks about. */
+/**
+ * Things SayOps added from something said (a correction X, or a spoken reason N) rather than from a
+ * recorded command, that no finding already asks about. Each needs a person's Keep/Remove.
+ */
 export function correctionAdditions(plan: Plan): { key: string; stepId: string | null; text: string }[] {
   const viaFinding = new Set(plan.findings.map((f) => f.fix_step).filter(Boolean));
   const out = plan.steps
-    .filter((s) => s.added && !viaFinding.has(s.id) && s.sources.some((id) => id.startsWith("X")))
-    .map((s) => ({ key: correctionKey(s.id), stepId: s.id as string | null, text: `Confirm step ${s.id} added from your correction: ${s.intent}` }));
-  if (plan.schedule?.why.startsWith("X")) {
-    out.push({ key: correctionKey("schedule"), stepId: null, text: `Confirm the schedule added from your correction: cron "${plan.schedule.cron}" (UTC)` });
+    .filter((s) => s.added && !viaFinding.has(s.id) && s.sources.length > 0 && s.sources.every((id) => !id.startsWith("C")))
+    .map((s) => ({
+      key: correctionKey(s.id),
+      stepId: s.id as string | null,
+      text: s.sources.some((id) => id.startsWith("X"))
+        ? `Confirm step ${s.id} added from your correction: ${s.intent}`
+        : `Confirm step ${s.id} added from what you said (${s.sources.join(", ")}): ${s.intent}`,
+    }));
+  if (plan.schedule) {
+    const from = plan.schedule.why.startsWith("X") ? "your correction" : `what you said (${plan.schedule.why})`;
+    out.push({ key: correctionKey("schedule"), stepId: null, text: `Confirm the schedule added from ${from}: cron "${plan.schedule.cron}" (UTC)` });
   }
   return out;
 }

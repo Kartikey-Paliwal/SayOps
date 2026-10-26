@@ -40,6 +40,7 @@ export default function Home() {
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>No sign-in and no setup. The demo is a recorded certificate renewal with seven spoken reasons.</li>
           <li>Look at the amber banner: the engineer said they always back up first, but never did. Try <b>Remove it</b>, then <b>Keep step</b>, and watch the status change.</li>
+          <li><b>Say it yourself:</b> pick a command, hold your own Wispr key and say a reason (or click an example). Watch it become a guard or a check in the script.</li>
           <li>Hover a source chip (C3, N5…) on any step to see the exact command or sentence it came from.</li>
           <li>Open the Bash script tab: every guard and rollback is annotated with the sentence that produced it.</li>
           <li>Nothing here connects to a real server.</li>

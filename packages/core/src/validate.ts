@@ -99,6 +99,16 @@ export function validatePlan(raw: unknown, session: AlignedSession, corrections:
       errors.push(`${n.id} is a condition but no step has a "condition" with "why": "${n.id}"; express it as skip_if on the step it gates (scope "all" if it decides whether the job is needed), not as a separate step`);
     }
   }
+  // A spoken guard must stop something; a spoken check must be checked.
+  for (const n of plan.narrations) {
+    // (which step then stops the run is enforced deterministically by enforceGuards)
+    if (n.kind === "guard" && !plan.steps.some((s) => s.sources.includes(n.id))) {
+      errors.push(`${n.id} is a guard but no step cites it; cite it on the step it protects, or add the check it names as a step before that step`);
+    }
+    if (n.kind === "verify" && !plan.verify.some((v) => v.why === n.id) && !plan.steps.some((s) => s.sources.includes(n.id))) {
+      errors.push(`${n.id} is a verification but nothing checks it; add a "verify" command citing ${n.id}`);
+    }
+  }
   // Every narration should be classified exactly once.
   const classified = new Set(plan.narrations.map((n) => n.id));
   for (const id of known) {

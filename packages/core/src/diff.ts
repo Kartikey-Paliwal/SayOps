@@ -36,7 +36,12 @@ export interface PlanDiff {
 }
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-const causes = (ids: string[]) => [...new Set(ids.filter((id) => id.startsWith("X")))];
+type Causes = (ids: string[]) => string[];
+/** Corrections (X) always explain a change; extra ids (e.g. a reason just spoken, N8) can too. */
+const causesWith = (extra: string[]): Causes => {
+  const set = new Set(extra);
+  return (ids) => [...new Set(ids.filter((id) => id.startsWith("X") || set.has(id)))];
+};
 
 function stepFields(a: PlanStep, b: PlanStep): string[] {
   const out: string[] = [];
@@ -49,7 +54,7 @@ function stepFields(a: PlanStep, b: PlanStep): string[] {
   return out;
 }
 
-function checks(prev: PlanCheck[], next: PlanCheck[]) {
+function checks(prev: PlanCheck[], next: PlanCheck[], causes: Causes) {
   const key = (c: PlanCheck) => `${c.remote}|${norm(c.run)}`;
   const before = new Set(prev.map(key));
   const after = new Set(next.map(key));
@@ -59,7 +64,8 @@ function checks(prev: PlanCheck[], next: PlanCheck[]) {
   };
 }
 
-export function diffPlans(prev: Plan, next: Plan): PlanDiff {
+export function diffPlans(prev: Plan, next: Plan, opts: { causeIds?: string[] } = {}): PlanDiff {
+  const causes = causesWith(opts.causeIds ?? []);
   const key = (s: PlanStep) => `${s.remote}|${norm(s.run)}`;
   const unmatchedPrev = new Map<string, PlanStep[]>();
   for (const s of prev.steps) unmatchedPrev.set(key(s), [...(unmatchedPrev.get(key(s)) ?? []), s]);
@@ -90,8 +96,8 @@ export function diffPlans(prev: Plan, next: Plan): PlanDiff {
   const diff: PlanDiff = {
     steps: { added, removed, changed },
     params: { added: [...nn].filter((n) => !pn.has(n)), removed: [...pn].filter((n) => !nn.has(n)) },
-    rollback: checks(prev.rollback, next.rollback),
-    verify: checks(prev.verify, next.verify),
+    rollback: checks(prev.rollback, next.rollback, causes),
+    verify: checks(prev.verify, next.verify, causes),
     schedule: from === to ? null : { from, to, causes: causes([next.schedule?.why ?? ""]) },
     findings: { added: [...nf].filter((f) => !pf.has(f)), removed: [...pf].filter((f) => !nf.has(f)) },
     empty: false,

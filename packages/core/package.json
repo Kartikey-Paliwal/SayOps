@@ -9,7 +9,8 @@
     "test": "vitest run",
     "compile:seed": "tsx scripts/compile-seed.ts",
     "proof:ssl": "tsx scripts/proof-ssl.ts",
-    "correction:seed": "tsx scripts/correction-seed.ts"
+    "correction:seed": "tsx scripts/correction-seed.ts",
+    "reasons:seed": "tsx scripts/reason-seed.ts"
   },
   "dependencies": {
     "zod": "^3.25.0"

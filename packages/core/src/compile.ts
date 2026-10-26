@@ -17,7 +17,9 @@ Classify every narration exactly once in "narrations":
 - guard: something must succeed or we stop ("always test the config before starting")
 - verify: how to confirm success ("make sure it returns 200")
 - rollback: what to do if it fails ("if it fails, put the old cert back")
-- warning: a risk to watch for
+- warning: a risk mentioned WITHOUT any action to take. If the sentence says what to check or do
+  ("never X if Y", "only X when Y", "make sure Y before X", "if Y, fail/stop/roll back"), it is a
+  guard, condition, verify or rollback — not a warning.
 - param_hint: a value that changes between runs ("the server name changes per customer")
 - claim: says they do something as a habit or intention ("I always back up first",
   "before this I make a copy"). If a narration both explains a step AND states a habit,
@@ -38,14 +40,18 @@ Build the plan:
   FIRST step so nothing is stopped or changed needlessly. Prefer robust checks
   (e.g. \`openssl x509 -checkend\`) over parsing human-readable output.
 - guard narrations set "on_fail": "abort_and_rollback" on the guarded step when a rollback exists,
-  otherwise "abort".
+  otherwise "abort". When the guard names a check that no recorded command performs ("never stop
+  nginx if the disk is over 90% full"), add that check as its own step right before the step it
+  protects ("added": true, cite the narration, "on_fail": "abort"), written as a command that exits
+  non-zero when it is unsafe to continue.
 - rollback narrations become "rollback" commands (run in order when any step fails).
 - verify narrations become "verify" commands that exit 0 on success (e.g. curl -fsS ... | grep -q).
 - SAID vs DID: for every claim/guard/rollback that mentions an action with NO matching command,
   add a finding "said_not_done" whose detail quotes what they said, AND insert the missing step
   where it belongs with "added": true, citing the narration. Set the finding's fix_step to it.
   Do not report a gap when a matching command was actually run.
-- warning narrations with no guard → finding "unguarded_warning".
+- warning narrations with no guard → finding "unguarded_warning". Prefer turning a warning into a
+  guard step whenever a reasonable check exists.
 - "schedule": when a narration or correction asks for a recurring run ("every Monday at 9"),
   set {"cron": five-field cron in UTC, "why": its id}; otherwise null.
 - Values the engineer must supply that were never recorded (e.g. a Slack webhook named in a
@@ -56,7 +62,9 @@ Corrections:
 - Apply every correction. A step, check, rollback or schedule that exists because of a
   correction cites its X id, and a new step has "added": true.
 - When <previous_plan> is given, keep every part of it exactly as it is (same commands, order,
-  ids, params, findings) unless a correction requires a change.
+  ids, params, findings) unless a correction, or a narration the previous plan does not yet
+  classify, requires a change. Express a new narration in the plan (condition, guard, rollback,
+  check or added step) exactly as you would have if it had been recorded.
 - Backups and restores MUST use the built-in helpers, never hand-written cp/mv:
   \`sayops_backup <path>\` copies <path> aside for this run (handles sudo itself);
   \`sayops_restore <path>\` puts that exact backup back in place of <path>.
@@ -104,7 +112,14 @@ export class CompileError extends Error {
  */
 export async function compile(
   llm: JsonLlm,
-  input: { title: string; session: AlignedSession; corrections?: Correction[]; previous?: Plan },
+  input: {
+    title: string;
+    session: AlignedSession;
+    corrections?: Correction[];
+    previous?: Plan;
+    /** longest wait on a 429 before retrying once; 0 = fail fast (public site on a free tier) */
+    rateLimitWaitS?: number;
+  },
 ): Promise<CompileResult> {
   const corrections = input.corrections ?? [];
   const user = compilerUserPrompt(input.title, input.session, corrections, input.previous);
@@ -127,7 +142,7 @@ export async function compile(
       : `${user}\n\nYour previous plan was rejected. Fix exactly these problems and return the full plan:\n- ${lastErrors.join("\n- ")}`;
     let res: LlmResponse;
     try {
-      res = await callWithRateLimit(llm, { system: COMPILER_SYSTEM, user: prompt, schemaName: "ops_plan", schema: planJsonSchema });
+      res = await callWithRateLimit(llm, { system: COMPILER_SYSTEM, user: prompt, schemaName: "ops_plan", schema: planJsonSchema }, input.rateLimitWaitS ?? 60);
     } catch (e) {
       // Truncated or off-schema output: spend the retry on it instead of failing outright.
       if (e instanceof LlmError && e.code === "json_validate_failed") {
@@ -171,12 +186,12 @@ export function enforceGuards(plan: Plan): Plan {
 }
 
 /** One wait-and-retry on 429, honouring retry-after (capped so a request never hangs). */
-async function callWithRateLimit(llm: JsonLlm, req: LlmRequest): Promise<LlmResponse> {
+async function callWithRateLimit(llm: JsonLlm, req: LlmRequest, maxWaitS: number): Promise<LlmResponse> {
   try {
     return await llm(req);
   } catch (e) {
-    if (!(e instanceof LlmError) || e.status !== 429) throw e;
-    const waitS = Math.min(e.retryAfterS ?? 10, 60);
+    if (!(e instanceof LlmError) || e.status !== 429 || maxWaitS <= 0) throw e;
+    const waitS = Math.min(e.retryAfterS ?? 10, maxWaitS);
     await new Promise((r) => setTimeout(r, waitS * 1000));
     return llm(req);
   }

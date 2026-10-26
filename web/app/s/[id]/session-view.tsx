@@ -1,12 +1,13 @@
 "use client";
 
 import {
-  assessReadiness, correctionAdditions, diffPlans, findingKey, slugify, sourceTexts,
-  type AlignedSession, type Correction, type Decision, type Finding, type Plan, type PlanDiff, type PlanStep, type ProofRun,
-  type ProofScenario, type Readiness,
+  align, assessReadiness, correctionAdditions, diffPlans, findingKey, slugify, sourceTexts, withSpokenReason,
+  type AlignedSession, type Correction, type Decision, type Finding, type NarrationKind, type Plan, type PlanDiff, type PlanStep,
+  type ProofRun, type ProofScenario, type Readiness, type ReasonExample, type SessionEvent,
 } from "@sayops/core";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
+import type { SayItResult } from "./actions";
 
 export interface VersionInfo {
   version: number;
@@ -17,6 +18,27 @@ export interface VersionInfo {
   at: string;
   /** the recorded sandbox proof was made with exactly this version's script */
   proofMatches: boolean;
+  /** version label override, e.g. "you said N8" */
+  label?: string;
+  /** compare against this version instead of the previous one */
+  basedOn?: number;
+  /** this version's own timeline (when it adds a spoken reason) */
+  session?: AlignedSession;
+  /** ids that explain this version's changes besides corrections, e.g. ["N8"] */
+  causeIds?: string[];
+  /** the sentence behind this version, for "Because you said ..." */
+  because?: { id: string; text: string };
+}
+
+export interface SayItConfig {
+  seedId: string;
+  /** the seed's redacted events, to rebuild the timeline with the new reason */
+  events: SessionEvent[];
+  commands: { seq: number; cmd: string }[];
+  examples: ReasonExample[];
+  /** a model key is configured on the server */
+  live: boolean;
+  run: (seedId: string, commandSeq: number, text: string) => Promise<SayItResult>;
 }
 
 export type CorrectionMode =
@@ -40,18 +62,26 @@ interface Props {
   corrections: Correction[];
   correctionMode: CorrectionMode;
   proof: ProofRun | null;
+  sayIt?: SayItConfig;
 }
 
 export function SessionView(props: Props) {
-  const { session, sessionId, versions, correctionMode } = props;
+  const { sessionId, versions, correctionMode } = props;
   const example = correctionMode.kind === "example";
   // In the seeded demo the corrected version is revealed by applying the example correction.
   const [exampleApplied, setExampleApplied] = useState(false);
-  const visible = example && !exampleApplied ? versions.slice(0, 1) : versions;
+  // A reason the visitor just said becomes its own version, compared against the original plan.
+  const [yours, setYours] = useState<VersionInfo | null>(null);
+  const visible = useMemo(() => {
+    const base = example && !exampleApplied ? versions.slice(0, 1) : versions;
+    return yours ? [...base, { ...yours, version: base.at(-1)!.version + 1 }] : base;
+  }, [example, exampleApplied, versions, yours]);
   const [picked, setPicked] = useState<number | null>(null);
   const current = visible.find((v) => v.version === picked) ?? visible.at(-1)!;
-  const previous = visible.filter((v) => v.version < current.version).at(-1) ?? null;
+  const previous =
+    (current.basedOn ? visible.find((v) => v.version === current.basedOn) : visible.filter((v) => v.version < current.version).at(-1)) ?? null;
   const plan = current.plan;
+  const session = current.session ?? props.session;
   const corrections = useMemo(
     () => props.corrections.filter((c) => visible.some((v) => v.version <= current.version && v.correction?.seq === c.seq)),
     [props.corrections, visible, current.version],
@@ -65,7 +95,7 @@ export function SessionView(props: Props) {
     () => assessReadiness({ plan, session, corrections, decisions, sessionId, version: current.version }),
     [plan, session, corrections, decisions, sessionId, current.version],
   );
-  const diff = useMemo(() => (previous ? diffPlans(previous.plan, plan) : null), [previous, plan]);
+  const diff = useMemo(() => (previous ? diffPlans(previous.plan, plan, { causeIds: current.causeIds }) : null), [previous, plan, current.causeIds]);
   const setDecision = (key: string, d: Decision | null) =>
     setAllDecisions((all) => {
       const next = { ...(all[current.version] ?? {}) };
@@ -107,6 +137,15 @@ export function SessionView(props: Props) {
 
       <ReadinessPanel readiness={readiness} />
 
+      {props.sayIt && (
+        <SayItYourself
+          config={props.sayIt}
+          active={yours?.because ?? null}
+          onResult={(v) => { setYours(v); setPicked(null); }}
+          onReset={() => { setYours(null); setPicked(null); }}
+        />
+      )}
+
       <TalkToFix
         mode={correctionMode}
         applied={exampleApplied}
@@ -115,14 +154,23 @@ export function SessionView(props: Props) {
       />
 
       {diff && previous && (
-        <DiffPanel diff={diff} from={previous.version} to={current.version} correction={current.correction} sources={sources} plan={plan} decisions={decisions} setDecision={setDecision} />
+        <DiffPanel
+          diff={diff}
+          from={previous.version}
+          to={current.version}
+          because={current.because ?? (current.correction ? { id: `X${current.correction.seq}`, text: current.correction.text } : null)}
+          sources={sources}
+          plan={plan}
+          decisions={decisions}
+          setDecision={setDecision}
+        />
       )}
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section aria-labelledby="timeline-h">
           <h2 id="timeline-h" className="text-lg font-semibold">What you did and said</h2>
           <p className="mt-1 text-sm text-zinc-500">Each spoken reason (dictated with Wispr Flow after <code className="font-mono">why</code>) is attached to the command before it.</p>
-          <Timeline session={session} kinds={kinds} hover={hover} />
+          <Timeline session={session} kinds={kinds} hover={hover} yours={current.causeIds ?? []} />
         </section>
 
         <section aria-labelledby="plan-h">
@@ -267,7 +315,7 @@ const KIND_LABEL: Record<string, string> = {
   warning: "warning", param_hint: "changes per run", claim: "claim", context: "context",
 };
 
-function Timeline({ session, kinds, hover }: { session: AlignedSession; kinds: Record<string, string>; hover: string | null }) {
+function Timeline({ session, kinds, hover, yours }: { session: AlignedSession; kinds: Record<string, string>; hover: string | null; yours: string[] }) {
   const ring = (id: string) => (hover === id ? "ring-2 ring-sky-500" : "");
   return (
     <ol className="mt-4 space-y-3">
@@ -289,9 +337,11 @@ function Timeline({ session, kinds, hover }: { session: AlignedSession; kinds: R
             </div>
             {s.superseded && <p className="mt-1 text-xs text-zinc-500">Typo, retried in the next command: left out of the plan.</p>}
             {s.narrations.map((n) => (
-              <p key={n.seq} className={`mt-2 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-950 dark:bg-sky-950/50 dark:text-sky-100 ${ring(`N${n.seq}`)}`}>
+              <p key={n.seq} className={`mt-2 rounded-lg px-3 py-2 text-sm ${yours.includes(`N${n.seq}`) ? "bg-violet-100 text-violet-950 ring-2 ring-violet-400 dark:bg-violet-950/60 dark:text-violet-100" : "bg-sky-50 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100"} ${ring(`N${n.seq}`)}`}>
                 <Mic /> {n.text}{" "}
-                <span className="whitespace-nowrap font-mono text-xs opacity-60">N{n.seq} · {KIND_LABEL[kinds[`N${n.seq}`]] ?? "reason"}</span>
+                <span className="whitespace-nowrap font-mono text-xs opacity-60">
+                  N{n.seq} · {KIND_LABEL[kinds[`N${n.seq}`]] ?? "reason"}{yours.includes(`N${n.seq}`) ? " · you" : ""}
+                </span>
               </p>
             ))}
           </li>
@@ -642,7 +692,7 @@ function VersionBar({ versions, current, onPick }: { versions: VersionInfo[]; cu
           onClick={() => onPick(v.version)}
           className={`rounded-full border px-3 py-1 ${v.version === current ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"}`}
         >
-          v{v.version} · {v.correction ? `X${v.correction.seq} “${v.correction.text.slice(0, 40)}${v.correction.text.length > 40 ? "…" : ""}”` : "compiled"}
+          v{v.version} · {v.label ?? (v.correction ? `X${v.correction.seq} “${v.correction.text.slice(0, 40)}${v.correction.text.length > 40 ? "…" : ""}”` : "compiled")}
         </button>
       ))}
     </nav>
@@ -763,11 +813,11 @@ function ReviewButtons({ reviewKey, decisions, setDecision }: {
   );
 }
 
-function DiffPanel({ diff, from, to, correction, sources, plan, decisions, setDecision }: {
+function DiffPanel({ diff, from, to, because, sources, plan, decisions, setDecision }: {
   diff: PlanDiff;
   from: number;
   to: number;
-  correction: Correction | null;
+  because: { id: string; text: string } | null;
   sources: Record<string, string>;
   plan: Plan;
   decisions: Record<string, Decision>;
@@ -778,9 +828,9 @@ function DiffPanel({ diff, from, to, correction, sources, plan, decisions, setDe
   return (
     <section aria-labelledby="diff-h" className="mt-6 rounded-2xl border-2 border-sky-300 bg-sky-50/50 p-5 dark:border-sky-800 dark:bg-sky-950/20">
       <h2 id="diff-h" className="text-lg font-semibold">What changed: v{from} → v{to}</h2>
-      {correction && (
+      {because && (
         <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
-          Because you said <span className="font-mono text-xs">X{correction.seq}</span> “{correction.text}”
+          Because you said <span className="font-mono text-xs">{because.id}</span> “{because.text}”
         </p>
       )}
       {diff.empty ? (
@@ -826,6 +876,144 @@ function DiffPanel({ diff, from, to, correction, sources, plan, decisions, setDe
         </ul>
       )}
       <p className="mt-3 text-xs text-zinc-500">Everything else is unchanged. Earlier versions are kept; pick one above to compare.</p>
+    </section>
+  );
+}
+
+// ---- say it yourself ------------------------------------------------------------------------
+
+const KIND_EFFECT: Partial<Record<NarrationKind, string>> = {
+  guard: "a guard: the run stops if it isn't true",
+  condition: "a condition: a step is skipped when it's met",
+  verify: "a check that must pass at the end",
+  rollback: "a rollback: what to undo if something fails",
+  claim: "a habit claim, checked by Said-vs-Did",
+  param_hint: "a value that changes between runs",
+  warning: "a warning (no check was named)",
+  reason: "a reason (explains the step, no new check)",
+  context: "context for the whole session",
+};
+
+function SayItYourself({ config, active, onResult, onReset }: {
+  config: SayItConfig;
+  active: { id: string; text: string } | null;
+  onResult: (v: VersionInfo) => void;
+  onReset: () => void;
+}) {
+  const [cmd, setCmd] = useState(config.commands.find((c) => c.seq === 3)?.seq ?? config.commands[0].seq);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, start] = useTransition();
+
+  /** Rebuilds the same timeline the server compiled (deterministic) and hands back a version. */
+  const show = (commandSeq: number, sentence: string, plan: Plan, kind: NarrationKind | null, recorded: { model: string; at: string } | null) => {
+    const r = withSpokenReason(config.events, commandSeq, sentence);
+    const id = `N${r.narration.seq}`;
+    onResult({
+      version: 0,
+      plan,
+      correction: null,
+      model: recorded?.model ?? "live",
+      at: recorded?.at ?? new Date().toISOString(),
+      proofMatches: false,
+      label: `you said ${id}${recorded ? " (recorded)" : ""}`,
+      basedOn: 1,
+      session: align(r.events, { overrides: r.overrides }),
+      causeIds: [id],
+      because: { id, text: r.narration.text },
+    });
+    setMsg({ ok: true, text: `${id} was read as ${KIND_EFFECT[kind ?? "reason"] ?? kind}. See what it changed below.` });
+    setTimeout(() => document.getElementById("diff-h")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
+  const submit = () => {
+    setMsg(null);
+    start(async () => {
+      const r = await config.run(config.seedId, cmd, text);
+      if (r.ok) show(cmd, text, r.plan, r.kind, null);
+      else setMsg({ ok: false, text: r.message });
+    });
+  };
+
+  return (
+    <section aria-labelledby="sayit-h" className="mt-8 rounded-2xl border-2 border-violet-300 bg-violet-50/40 p-5 dark:border-violet-800 dark:bg-violet-950/20">
+      <p className="text-xs font-semibold uppercase tracking-widest text-violet-800 dark:text-violet-300">Try it with your own voice</p>
+      <h2 id="sayit-h" className="mt-1 text-xl font-semibold">Say it yourself</h2>
+      <p className="mt-1 max-w-3xl text-sm text-zinc-700 dark:text-zinc-300">
+        Pick a command, click the box, hold your Wispr Flow key and say what must be true, or why it matters.
+        SayOps adds your sentence as a new spoken reason and shows exactly what it changes in the script.
+      </p>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <label className="text-sm">
+          <span className="text-zinc-500">Command</span>
+          <select
+            value={cmd}
+            onChange={(e) => setCmd(Number(e.target.value))}
+            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            {config.commands.map((c) => (
+              <option key={c.seq} value={c.seq}>C{c.seq} · {c.cmd.length > 60 ? `${c.cmd.slice(0, 60)}…` : c.cmd}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm">
+          <span className="text-zinc-500">Your reason</span>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={2}
+            maxLength={240}
+            placeholder="e.g. never stop nginx if the disk is over 90% full"
+            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          />
+        </label>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={pending || !text.trim() || !config.live}
+          className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-50"
+        >
+          {pending ? "Compiling your reason… (5–15 s)" : "Turn it into automation"}
+        </button>
+        {active && (
+          <button type="button" onClick={() => { onReset(); setMsg(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700">
+            Back to the original
+          </button>
+        )}
+        {!config.live && <span className="text-xs text-zinc-500">Live mode is off on this site right now; the recorded examples below still work.</span>}
+        {msg && <p role="status" className={`text-sm ${msg.ok ? "text-emerald-800 dark:text-emerald-300" : "text-red-800 dark:text-red-300"}`}>{msg.text}</p>}
+      </div>
+
+      {config.examples.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs text-zinc-500">
+            Or try a recorded example (real results compiled live by {config.examples[0].model}; instant, no AI call):
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {config.examples.map((ex) => (
+              <button
+                key={`${ex.commandSeq}-${ex.text}`}
+                type="button"
+                onClick={() => {
+                  setCmd(ex.commandSeq);
+                  setText(ex.text);
+                  show(ex.commandSeq, ex.text, ex.plan, ex.kind, { model: ex.model, at: ex.recordedAt });
+                }}
+                className="rounded-full border border-violet-300 bg-white px-3 py-1.5 text-left text-xs hover:bg-violet-50 dark:border-violet-800 dark:bg-zinc-950 dark:hover:bg-violet-950/40"
+              >
+                <span className="font-mono text-violet-700 dark:text-violet-300">C{ex.commandSeq}</span> “{ex.text}”
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">
+        Nothing you say is stored. The result is only shown to you, and SayOps never runs anything from this page.
+      </p>
     </section>
   );
 }
