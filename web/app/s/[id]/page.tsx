@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { sayItStatusAction, sayItYourselfAction } from "./actions";
+import { SiteFooter, SiteHeader } from "@/components/site-header";
 import { SessionView, type VersionInfo } from "./session-view";
 
 // A live "say it yourself" compile takes ~5–15 s; give the server action room.
@@ -20,9 +21,13 @@ export async function generateMetadata(props: PageProps<"/s/[id]">): Promise<Met
 
 export default function SessionPage(props: PageProps<"/s/[id]">) {
   return (
-    <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-10 text-zinc-500 sm:px-6">Loading session…</p>}>
-      <Session params={props.params} />
-    </Suspense>
+    <>
+      <SiteHeader />
+      <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-10 text-muted sm:px-6">Loading session…</p>}>
+        <Session params={props.params} />
+      </Suspense>
+      <SiteFooter />
+    </>
   );
 }
 

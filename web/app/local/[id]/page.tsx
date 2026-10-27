@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { SiteFooter, SiteHeader } from "@/components/site-header";
 import { SessionView, type VersionInfo } from "../../s/[id]/session-view";
 import { applyCorrectionAction } from "./actions";
 
@@ -20,9 +21,13 @@ export const metadata: Metadata = { title: "Local session · SayOps" };
 
 export default function LocalSessionPage(props: PageProps<"/local/[id]">) {
   return (
-    <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-10 text-zinc-500 sm:px-6">Loading session…</p>}>
-      <LocalSession params={props.params} />
-    </Suspense>
+    <>
+      <SiteHeader />
+      <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-10 text-muted sm:px-6">Loading session…</p>}>
+        <LocalSession params={props.params} />
+      </Suspense>
+      <SiteFooter />
+    </>
   );
 }
 

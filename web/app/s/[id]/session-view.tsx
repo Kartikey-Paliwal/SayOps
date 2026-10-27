@@ -112,22 +112,28 @@ export function SessionView(props: Props) {
   const commandCount = session.steps.length;
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6">
-      <nav className="text-sm">
-        <Link href="/" className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">← SayOps</Link>
-      </nav>
-
-      <header className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="font-mono text-xs uppercase tracking-widest text-zinc-500">Recorded session · {sessionId}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">{props.title}</h1>
-          <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-400">{props.summary}</p>
-          <p className="mt-2 text-sm text-zinc-500">
-            {commandCount} commands · {props.narrationCount} spoken reasons · {props.redacted} secret redacted before upload · {props.shell}
-          </p>
+    <main className="mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6">
+      <header id="overview" className="relative animate-fade-up pt-10">
+        <div aria-hidden className="bg-glow pointer-events-none absolute inset-x-0 -top-10 h-56" />
+        <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <nav aria-label="Breadcrumb" className="text-sm text-muted">
+              <Link href="/" className="hover:text-foreground">SayOps</Link> <span aria-hidden>/</span> <span>Recorded sessions</span>{" "}
+              <span aria-hidden>/</span> <span className="font-mono text-xs">{sessionId}</span>
+            </nav>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{props.title}</h1>
+            <p className="mt-3 max-w-2xl text-muted">{props.summary}</p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              {[`${commandCount} commands`, `${props.narrationCount} spoken reasons`, `${props.redacted} secret redacted on capture`, props.shell].map((t) => (
+                <span key={t} className="rounded-full border border-line bg-surface px-2.5 py-1 text-muted">{t}</span>
+              ))}
+            </div>
+          </div>
+          <StatusBadge status={readiness.status} />
         </div>
-        <StatusBadge status={readiness.status} />
       </header>
+
+      <SectionNav />
 
       <Glance props={props} plan={plan} proofMatches={current.proofMatches} readiness={readiness} decisions={decisions} />
 
@@ -168,16 +174,18 @@ export function SessionView(props: Props) {
         />
       )}
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <div className="mt-14 grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section aria-labelledby="timeline-h">
-          <h2 id="timeline-h" className="text-lg font-semibold">What you did and said</h2>
-          <p className="mt-1 text-sm text-zinc-500">Each spoken reason (dictated with Wispr Flow after <code className="font-mono">why</code>) is attached to the command before it.</p>
+          <p className="eyebrow">Recorded</p>
+          <h2 id="timeline-h" className="mt-1 text-xl font-semibold tracking-tight">What you did and said</h2>
+          <p className="mt-1 text-sm text-muted">Each spoken reason (dictated with Wispr Flow after <code className="font-mono">why</code>) is attached to the command before it.</p>
           <Timeline session={session} kinds={kinds} hover={hover} yours={current.causeIds ?? []} />
         </section>
 
         <section aria-labelledby="plan-h">
-          <h2 id="plan-h" className="text-lg font-semibold">What SayOps built from it</h2>
-          <p className="mt-1 text-sm text-zinc-500">Hover a source chip to see the command or sentence it came from.</p>
+          <p className="eyebrow">Compiled</p>
+          <h2 id="plan-h" className="mt-1 text-xl font-semibold tracking-tight">What SayOps built from it</h2>
+          <p className="mt-1 text-sm text-muted">Hover a source chip to see the command or sentence it came from.</p>
           <PlanView plan={readiness.plan} kinds={kinds} sources={sources} setHover={setHover} />
           {otherFindings.length > 0 && (
             <ul className="mt-4 space-y-2">
@@ -195,7 +203,7 @@ export function SessionView(props: Props) {
 
       <ArtifactTabs title={plan.title} readiness={readiness} />
 
-      <p className="mt-10 border-t border-zinc-200 pt-4 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="mt-10 border-t border-zinc-200 pt-4 text-xs text-muted dark:border-zinc-800">
         This demo uses a seeded session, its cached plan and a recorded sandbox run, so no AI key or Docker is needed to explore it. The live compiler
         (Groq <code className="font-mono">openai/gpt-oss-120b</code>) produces the same structure and is checked against this plan in
         the test suite. Nothing on this page connects to a real server; the generated script runs only where you run it.
@@ -206,19 +214,25 @@ export function SessionView(props: Props) {
 
 // ---- status ------------------------------------------------------------------------------
 
-const STATUS: Record<Readiness["status"], { label: string; hint: string; cls: string }> = {
-  ready: { label: "Ready", hint: "Safe to download and test in a sandbox", cls: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" },
-  needs_review: { label: "Needs review", hint: "Confirm what SayOps added", cls: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200" },
-  blocked: { label: "Blocked", hint: "Not safe to use yet", cls: "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200" },
+const STATUS: Record<Readiness["status"], { label: string; hint: string; cls: string; dot: string }> = {
+  ready: { label: "Ready", hint: "Safe to download and test in a sandbox", cls: "text-emerald-700 dark:text-emerald-300", dot: "bg-emerald-500" },
+  needs_review: { label: "Needs review", hint: "Confirm what SayOps added", cls: "text-amber-700 dark:text-amber-300", dot: "bg-amber-500" },
+  blocked: { label: "Blocked", hint: "Not safe to use yet", cls: "text-red-700 dark:text-red-300", dot: "bg-red-500" },
 };
 
 function StatusBadge({ status }: { status: Readiness["status"] }) {
   const s = STATUS[status];
   return (
-    <div role="status" aria-live="polite" className={`shrink-0 rounded-xl border px-4 py-3 ${s.cls}`}>
-      <p className="text-xs font-medium uppercase tracking-wider opacity-75">Automation status</p>
-      <p className="text-xl font-semibold">{s.label}</p>
-      <p className="text-xs opacity-80">{s.hint}</p>
+    <div role="status" aria-live="polite" className="card shrink-0 px-5 py-4 transition-colors">
+      <p className="eyebrow">Automation status</p>
+      <p className={`mt-1 flex items-center gap-2 text-xl font-semibold ${s.cls}`}>
+        <span className="relative flex h-2.5 w-2.5">
+          <span className={`ping-soft absolute inline-flex h-full w-full rounded-full ${s.dot}`} />
+          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${s.dot}`} />
+        </span>
+        {s.label}
+      </p>
+      <p className="mt-0.5 text-xs text-muted">{s.hint}</p>
     </div>
   );
 }
@@ -247,15 +261,15 @@ function SaidVsDid({ finding, plan, sources, decision, onDecide }: {
       <h2 className="mt-2 text-xl font-semibold sm:text-2xl">You said it. It never ran.</h2>
       {said.map((s) => (
         <blockquote key={s.id} className="mt-3 border-l-4 border-amber-400 pl-4 text-lg italic text-zinc-800 dark:text-zinc-200">
-          “{s.text}” <span className="not-italic font-mono text-xs text-zinc-500">{s.id}</span>
+          “{s.text}” <span className="not-italic font-mono text-xs text-muted">{s.id}</span>
         </blockquote>
       ))}
-      <p className="mt-3 max-w-3xl text-sm text-zinc-700 dark:text-zinc-300">
+      <p className="mt-3 max-w-3xl text-sm text-foreground/80">
         No command in this session did what you described.
         {restoreWhy && <> If a step had failed, the rollback you asked for (“{sources[restoreWhy]}”) would have had nothing to restore.</>}
       </p>
       {step && (
-        <div className="mt-4 rounded-lg border border-zinc-300 bg-white/70 p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+        <div className="mt-4 rounded-lg border border-line bg-white/70 p-3 ">
           <p className="text-sm font-medium">SayOps added step {step.id}: {step.intent}</p>
           <code className="mt-1 block break-all font-mono text-sm">{step.run}</code>
         </div>
@@ -266,7 +280,7 @@ function SaidVsDid({ finding, plan, sources, decision, onDecide }: {
             <p className="text-sm font-medium">
               {decision === "accepted" ? `Accepted: ${step?.id ?? "the step"} stays in the script.` : `Removed: ${step?.id ?? "the step"} is out of the plan.`}
             </p>
-            <button type="button" onClick={() => onDecide(null)} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-white dark:border-zinc-700 dark:hover:bg-zinc-900">
+            <button type="button" onClick={() => onDecide(null)} className="rounded-lg border border-line px-3 py-1.5 text-sm hover:bg-white dark:border-zinc-700 dark:hover:bg-zinc-900">
               Undo
             </button>
           </>
@@ -337,7 +351,7 @@ function Timeline({ session, kinds, hover, yours }: { session: AlignedSession; k
                 exit {c.exit}
               </span>
             </div>
-            {s.superseded && <p className="mt-1 text-xs text-zinc-500">Typo, retried in the next command: left out of the plan.</p>}
+            {s.superseded && <p className="mt-1 text-xs text-muted">Typo, retried in the next command: left out of the plan.</p>}
             {s.narrations.map((n) => (
               <p key={n.seq} className={`mt-2 rounded-lg px-3 py-2 text-sm ${yours.includes(`N${n.seq}`) ? "bg-violet-100 text-violet-950 ring-2 ring-violet-400 dark:bg-violet-950/60 dark:text-violet-100" : "bg-sky-50 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100"} ${ring(`N${n.seq}`)}`}>
                 <Mic /> {n.text}{" "}
@@ -385,7 +399,7 @@ function SourceChips({ ids, sources, setHover }: { ids: string[]; sources: Recor
           onMouseLeave={() => setHover(null)}
           onFocus={() => setHover(id)}
           onBlur={() => setHover(null)}
-          className={`rounded border px-1.5 font-mono text-xs ${id.startsWith("N") ? "border-sky-300 text-sky-800 dark:border-sky-800 dark:text-sky-300" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}
+          className={`rounded border px-1.5 font-mono text-xs ${id.startsWith("N") ? "border-sky-300 text-sky-800 dark:border-sky-800 dark:text-sky-300" : "border-line text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"}`}
         >
           {id}
         </button>
@@ -398,7 +412,7 @@ function PlanView({ plan, kinds, sources, setHover }: { plan: Plan; kinds: Recor
   return (
     <div className="mt-4 space-y-3">
       {plan.params.length > 0 && (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-muted">
           Parameters:{" "}
           {plan.params.map((p) => (
             <code key={p.name} className="mr-2 font-mono text-xs">
@@ -411,9 +425,9 @@ function PlanView({ plan, kinds, sources, setHover }: { plan: Plan; kinds: Recor
         {plan.steps.map((s) => {
           const guarded = s.sources.some((id) => kinds[id] === "guard");
           return (
-            <li key={s.id} className={`rounded-xl border p-3 ${s.added ? "border-amber-400 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-950/30" : "border-zinc-200 dark:border-zinc-800"}`}>
+            <li key={s.id} className={`rounded-xl border p-3 transition-shadow hover:shadow-md ${s.added ? "border-amber-400/70 bg-amber-50/60 dark:border-amber-700/70 dark:bg-amber-950/30" : "border-line bg-surface"}`}>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs text-zinc-500">{s.id}</span>
+                <span className="font-mono text-xs text-muted">{s.id}</span>
                 <span className="font-medium">{s.intent}</span>
                 <Chip cls={RISK[s.risk]}>{s.risk.toLowerCase()} risk</Chip>
                 {s.added && <Chip cls="bg-amber-200 text-amber-950 dark:bg-amber-800 dark:text-amber-50">added by SayOps</Chip>}
@@ -422,14 +436,14 @@ function PlanView({ plan, kinds, sources, setHover }: { plan: Plan; kinds: Recor
               </div>
               <code className="mt-2 block break-all rounded-md bg-zinc-50 px-2 py-1.5 font-mono text-sm dark:bg-zinc-900">{s.run}</code>
               {s.condition && (
-                <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+                <p className="mt-2 text-sm text-foreground/80">
                   <Chip cls="bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">condition</Chip>{" "}
                   Skip {s.condition.scope === "all" ? "the whole task" : "this step"} when{" "}
                   <code className="break-all font-mono text-xs">{s.condition.skip_if}</code> succeeds{" "}
                   <SourceChips ids={[s.condition.why]} sources={sources} setHover={setHover} />
                 </p>
               )}
-              <p className="mt-2 text-xs text-zinc-500">
+              <p className="mt-2 text-xs text-muted">
                 from <SourceChips ids={s.sources} sources={sources} setHover={setHover} />
               </p>
             </li>
@@ -441,13 +455,13 @@ function PlanView({ plan, kinds, sources, setHover }: { plan: Plan; kinds: Recor
           <p className="text-sm font-medium">If a guarded step fails: roll back</p>
           {plan.rollback.length ? plan.rollback.map((r, i) => (
             <p key={i} className="mt-2 text-sm"><code className="break-all font-mono">{r.run}</code> <SourceChips ids={[r.why]} sources={sources} setHover={setHover} /></p>
-          )) : <p className="mt-2 text-sm text-zinc-500">No rollback described.</p>}
+          )) : <p className="mt-2 text-sm text-muted">No rollback described.</p>}
         </div>
         <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
           <p className="text-sm font-medium">At the end: verify</p>
           {plan.verify.length ? plan.verify.map((v, i) => (
             <p key={i} className="mt-2 text-sm"><code className="break-all font-mono">{v.run}</code> <SourceChips ids={[v.why]} sources={sources} setHover={setHover} /></p>
-          )) : <p className="mt-2 text-sm text-zinc-500">No verification described.</p>}
+          )) : <p className="mt-2 text-sm text-muted">No verification described.</p>}
         </div>
       </div>
     </div>
@@ -490,8 +504,9 @@ function ArtifactTabs({ title, readiness }: { title: string; readiness: Readines
 
   return (
     <section aria-labelledby="artifacts-h" className="mt-10">
-      <h2 id="artifacts-h" className="text-lg font-semibold">Generated automation</h2>
-      <p className="mt-1 text-sm text-zinc-500">
+      <p className="eyebrow">Shipped</p>
+      <h2 id="artifacts-h" className="mt-1 text-xl font-semibold tracking-tight">Generated automation</h2>
+      <p className="mt-1 text-sm text-muted">
         Rendered deterministically from the plan, not written freehand by the AI. Each step keeps its source reference.
       </p>
       {checks.length > 0 && (
@@ -508,7 +523,7 @@ function ArtifactTabs({ title, readiness }: { title: string; readiness: Readines
           Nothing is generated while the plan is blocked. Resolve the blockers above (or undo the removal) to get the script back.
         </p>
       ) : (
-        <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="mt-4 overflow-hidden rounded-xl border border-line">
           <div className="flex flex-wrap items-center gap-1 border-b border-zinc-200 bg-zinc-50 p-1.5 dark:border-zinc-800 dark:bg-zinc-900" role="tablist">
             {TABS.map((t) => (
               <button
@@ -559,9 +574,9 @@ function Glance({ props, plan, proofMatches: proofMatchesScript, readiness, deci
     <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 sm:grid-cols-5 dark:border-zinc-800 dark:bg-zinc-800">
       {cards.map((c) => (
         <div key={c.label} className="bg-white p-3 dark:bg-zinc-950">
-          <dt className="text-xs font-medium uppercase tracking-wider text-zinc-500">{c.label}</dt>
+          <dt className="text-xs font-medium uppercase tracking-wider text-muted">{c.label}</dt>
           <dd className={`mt-1 text-2xl font-semibold ${c.tone ? tone[c.tone] : ""}`}>{c.value}</dd>
-          <dd className="text-xs text-zinc-500">{c.note}</dd>
+          <dd className="text-xs text-muted">{c.note}</dd>
         </div>
       ))}
     </dl>
@@ -573,7 +588,7 @@ function Glance({ props, plan, proofMatches: proofMatchesScript, readiness, deci
 const STEP_ICON: Record<string, { icon: string; cls: string; label: string }> = {
   ok: { icon: "✓", cls: "text-emerald-700 dark:text-emerald-400", label: "ok" },
   failed: { icon: "✗", cls: "text-red-700 dark:text-red-400", label: "failed" },
-  skipped: { icon: "–", cls: "text-zinc-500", label: "skipped" },
+  skipped: { icon: "–", cls: "text-muted", label: "skipped" },
   not_run: { icon: "·", cls: "text-zinc-400", label: "not run" },
 };
 
@@ -587,12 +602,13 @@ const EXIT_MEANING: Record<number, string> = {
 function SandboxProof({ proof, matches, version, dismissed }: { proof: ProofRun | null; matches: boolean; version: number; dismissed: boolean }) {
   return (
     <section aria-labelledby="proof-h" className="mt-10">
-      <h2 id="proof-h" className="text-lg font-semibold">What the sandbox proved</h2>
+      <p className="eyebrow">Proven</p>
+      <h2 id="proof-h" className="mt-1 text-xl font-semibold tracking-tight">What the sandbox proved</h2>
       {!proof ? (
-        <p className="mt-2 text-sm text-zinc-500">No sandbox run has been recorded for this session yet.</p>
+        <p className="mt-2 text-sm text-muted">No sandbox run has been recorded for this session yet.</p>
       ) : (
         <>
-          <p className="mt-1 max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="mt-1 max-w-3xl text-sm text-muted">
             The generated script was run for real against a throwaway web server (real nginx, openssl and curl; stand-ins for
             certbot and systemctl) in a Docker container with no network. Results are recorded, not live: this website never runs commands.
             After each run the sandbox was inspected independently, without trusting what the script said.
@@ -608,7 +624,7 @@ function SandboxProof({ proof, matches, version, dismissed }: { proof: ProofRun 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
             {proof.scenarios.map((s) => <ScenarioCard key={s.id} s={s} />)}
           </div>
-          <details className="mt-3 text-xs text-zinc-500">
+          <details className="mt-3 text-xs text-muted">
             <summary className="cursor-pointer">Sandbox isolation</summary>
             <ul className="mt-1 list-disc pl-5">{proof.environment.isolation.map((i) => <li key={i} className="font-mono">{i}</li>)}</ul>
             <p className="mt-1">Parameters: {Object.entries(proof.params).map(([k, v]) => `${k}=${v}`).join(" · ")}</p>
@@ -628,9 +644,9 @@ function ScenarioCard({ s }: { s: ProofScenario }) {
           {s.passed ? "proved" : "did not prove"}
         </span>
       </div>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{s.setup}</p>
+      <p className="mt-1 text-sm text-muted">{s.setup}</p>
       <p className="mt-1 text-sm"><b>Expected:</b> {s.expectation}</p>
-      <p className="mt-2 font-mono text-xs text-zinc-500">
+      <p className="mt-2 font-mono text-xs text-muted">
         exit {s.exitCode} ({EXIT_MEANING[s.exitCode] ?? "unexpected"}) · expected {s.expectedExit} · {(s.durationMs / 1000).toFixed(1)}s
       </p>
 
@@ -642,13 +658,13 @@ function ScenarioCard({ s }: { s: ProofScenario }) {
               <details>
                 <summary className="cursor-pointer list-none">
                   <span className={`inline-block w-4 font-mono ${icon.cls}`} aria-label={icon.label}>{icon.icon}</span>
-                  <span className="font-mono text-xs text-zinc-500">{st.id}</span> {st.intent}
+                  <span className="font-mono text-xs text-muted">{st.id}</span> {st.intent}
                   {st.status === "failed" && <span className="text-red-700 dark:text-red-400"> (exit {st.exitCode})</span>}
                 </summary>
                 {st.output.length > 0 ? (
                   <pre className="mt-1 max-h-48 overflow-auto rounded bg-zinc-50 p-2 font-mono text-[11px] leading-snug dark:bg-zinc-900">{st.output.join("\n")}</pre>
                 ) : (
-                  <p className="ml-4 mt-1 text-xs text-zinc-500">Not executed{s.skippedAll ? ` (task skipped by ${s.skippedAll}'s condition)` : ""}.</p>
+                  <p className="ml-4 mt-1 text-xs text-muted">Not executed{s.skippedAll ? ` (task skipped by ${s.skippedAll}'s condition)` : ""}.</p>
                 )}
               </details>
             </li>
@@ -672,7 +688,7 @@ function ScenarioCard({ s }: { s: ProofScenario }) {
       </ul>
 
       <details className="mt-3">
-        <summary className="cursor-pointer text-xs text-zinc-500">Full recorded output ({s.log.length} lines)</summary>
+        <summary className="cursor-pointer text-xs text-muted">Full recorded output ({s.log.length} lines)</summary>
         <pre className="mt-1 max-h-72 overflow-auto rounded bg-zinc-50 p-2 font-mono text-[11px] leading-snug dark:bg-zinc-900">{s.log.join("\n")}</pre>
       </details>
     </article>
@@ -685,14 +701,14 @@ function VersionBar({ versions, current, onPick }: { versions: VersionInfo[]; cu
   if (versions.length < 2) return null;
   return (
     <nav aria-label="Plan versions" className="mt-6 flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-zinc-500">Plan versions:</span>
+      <span className="text-muted">Plan versions:</span>
       {versions.map((v) => (
         <button
           key={v.version}
           type="button"
           aria-pressed={v.version === current}
           onClick={() => onPick(v.version)}
-          className={`rounded-full border px-3 py-1 ${v.version === current ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"}`}
+          className={`rounded-full border px-3 py-1 ${v.version === current ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900" : "border-line hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"}`}
         >
           v{v.version} · {v.label ?? (v.correction ? `X${v.correction.seq} “${v.correction.text.slice(0, 40)}${v.correction.text.length > 40 ? "…" : ""}”` : "compiled")}
         </button>
@@ -734,9 +750,9 @@ function TalkToFix({ mode, applied, onExample, onUndoExample }: {
   };
 
   return (
-    <section aria-labelledby="fix-h" className="mt-8 rounded-2xl border border-zinc-200 p-5 dark:border-zinc-800">
+    <section aria-labelledby="fix-h" className="card mt-8 p-6">
       <h2 id="fix-h" className="text-lg font-semibold">Talk to fix it</h2>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+      <p className="mt-1 text-sm text-muted">
         Click the box, hold your Wispr Flow key and say what should change. SayOps recompiles with your correction, keeps the old
         version, and shows exactly what changed. Anything it adds waits for your review.
       </p>
@@ -754,13 +770,13 @@ function TalkToFix({ mode, applied, onExample, onUndoExample }: {
         rows={2}
         maxLength={1000}
         placeholder="e.g. also post to Slack when it's done, and run this every Monday at 9"
-        className="mt-3 w-full rounded-lg border border-zinc-300 bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="mt-3 w-full rounded-lg border border-line bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
       />
       <div className="mt-2 flex flex-wrap items-center gap-3">
         {isExample && applied ? (
           <>
             <span className="text-sm text-emerald-800 dark:text-emerald-300">Applied: plan v2 is shown below.</span>
-            <button type="button" onClick={() => { onUndoExample(); setResult(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700">Back to v1</button>
+            <button type="button" onClick={() => { onUndoExample(); setResult(null); }} className="rounded-lg border border-line px-3 py-1.5 text-sm dark:border-zinc-700">Back to v1</button>
           </>
         ) : (
           <button
@@ -777,7 +793,7 @@ function TalkToFix({ mode, applied, onExample, onUndoExample }: {
         )}
       </div>
       {mode.kind === "local" && mode.failed.length > 0 && (
-        <details className="mt-3 text-xs text-zinc-500">
+        <details className="mt-3 text-xs text-muted">
           <summary className="cursor-pointer">{mode.failed.length} correction(s) could not be applied (the plan was kept)</summary>
           <ul className="mt-1 list-disc pl-5">{mode.failed.map((f) => <li key={f.seq}>X{f.seq} “{f.text}”: {f.error}</li>)}</ul>
         </details>
@@ -789,7 +805,7 @@ function TalkToFix({ mode, applied, onExample, onUndoExample }: {
 function Cause({ ids, sources }: { ids: string[]; sources: Record<string, string> }) {
   if (!ids.length) return null;
   return (
-    <span className="text-xs text-zinc-500">
+    <span className="text-xs text-muted">
       {" "}← {ids.map((id) => <span key={id}><span className="font-mono">{id}</span>{sources[id] ? ` “${sources[id]}”` : ""}</span>)}
     </span>
   );
@@ -828,15 +844,15 @@ function DiffPanel({ diff, from, to, because, sources, plan, decisions, setDecis
   const additions = new Map(correctionAdditions(plan).map((a) => [a.stepId ?? "schedule", a.key]));
   const row = "rounded-lg px-3 py-2 text-sm";
   return (
-    <section aria-labelledby="diff-h" className="mt-6 rounded-2xl border-2 border-sky-300 bg-sky-50/50 p-5 dark:border-sky-800 dark:bg-sky-950/20">
+    <section aria-labelledby="diff-h" className="card mt-6 animate-pop p-6 ring-1 ring-sky-500/25">
       <h2 id="diff-h" className="text-lg font-semibold">What changed: v{from} → v{to}</h2>
       {because && (
-        <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+        <p className="mt-1 text-sm text-foreground/80">
           Because you said <span className="font-mono text-xs">{because.id}</span> “{because.text}”
         </p>
       )}
       {diff.empty ? (
-        <p className="mt-3 text-sm text-zinc-500">No change to the plan.</p>
+        <p className="mt-3 text-sm text-muted">No change to the plan.</p>
       ) : (
         <ul className="mt-3 space-y-2">
           {diff.steps.added.map((s) => (
@@ -862,22 +878,22 @@ function DiffPanel({ diff, from, to, because, sources, plan, decisions, setDecis
           {diff.schedule && (
             <li className={`${row} bg-emerald-50 dark:bg-emerald-950/40`}>
               <b className="text-emerald-800 dark:text-emerald-300">~ schedule</b> {diff.schedule.from ?? "none"} → <code className="font-mono">{diff.schedule.to ?? "none"}</code>{" "}
-              <span className="text-xs text-zinc-500">(cron, UTC; the GitHub workflow now runs on this schedule)</span>
+              <span className="text-xs text-muted">(cron, UTC; the GitHub workflow now runs on this schedule)</span>
               <ReviewButtons reviewKey={additions.get("schedule")} decisions={decisions} setDecision={setDecision} />
               <Cause ids={diff.schedule.causes} sources={sources} />
             </li>
           )}
-          {diff.params.added.map((p) => <li key={`pa${p}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>+ parameter <code className="font-mono">{p}</code></li>)}
-          {diff.params.removed.map((p) => <li key={`pr${p}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>− parameter <code className="font-mono">{p}</code></li>)}
+          {diff.params.added.map((p) => <li key={`pa${p}`} className={`${row} bg-surface-2`}>+ parameter <code className="font-mono">{p}</code></li>)}
+          {diff.params.removed.map((p) => <li key={`pr${p}`} className={`${row} bg-surface-2`}>− parameter <code className="font-mono">{p}</code></li>)}
           {[...diff.rollback.added.map((c) => ["+ rollback", c] as const), ...diff.verify.added.map((c) => ["+ check", c] as const)].map(([label, c]) => (
-            <li key={`${label}${c.run}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>{label} <code className="break-all font-mono text-xs">{c.run}</code><Cause ids={c.causes} sources={sources} /></li>
+            <li key={`${label}${c.run}`} className={`${row} bg-surface-2`}>{label} <code className="break-all font-mono text-xs">{c.run}</code><Cause ids={c.causes} sources={sources} /></li>
           ))}
           {[...diff.rollback.removed.map((c) => ["− rollback", c] as const), ...diff.verify.removed.map((c) => ["− check", c] as const)].map(([label, c]) => (
-            <li key={`${label}${c.run}`} className={`${row} bg-zinc-50 dark:bg-zinc-900`}>{label} <code className="break-all font-mono text-xs">{c.run}</code></li>
+            <li key={`${label}${c.run}`} className={`${row} bg-surface-2`}>{label} <code className="break-all font-mono text-xs">{c.run}</code></li>
           ))}
         </ul>
       )}
-      <p className="mt-3 text-xs text-zinc-500">Everything else is unchanged. Earlier versions are kept; pick one above to compare.</p>
+      <p className="mt-3 text-xs text-muted">Everything else is unchanged. Earlier versions are kept; pick one above to compare.</p>
     </section>
   );
 }
@@ -944,21 +960,23 @@ function SayItYourself({ config, active, onResult, onReset }: {
   };
 
   return (
-    <section aria-labelledby="sayit-h" className="mt-8 rounded-2xl border-2 border-violet-300 bg-violet-50/40 p-5 dark:border-violet-800 dark:bg-violet-950/20">
+    <section aria-labelledby="sayit-h" className="card relative mt-8 overflow-hidden p-6 ring-1 ring-violet-500/20">
+      <div aria-hidden className="bg-glow pointer-events-none absolute inset-0 opacity-60" />
+      <div className="relative">
       <p className="text-xs font-semibold uppercase tracking-widest text-violet-800 dark:text-violet-300">Try it with your own voice</p>
       <h2 id="sayit-h" className="mt-1 text-xl font-semibold">Say it yourself</h2>
-      <p className="mt-1 max-w-3xl text-sm text-zinc-700 dark:text-zinc-300">
+      <p className="mt-1 max-w-3xl text-sm text-foreground/80">
         Pick a command, click the box, hold your Wispr Flow key and say what must be true, or why it matters.
         SayOps adds your sentence as a new spoken reason and shows exactly what it changes in the script.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <label className="text-sm">
-          <span className="text-zinc-500">Command</span>
+          <span className="text-muted">Command</span>
           <select
             value={cmd}
             onChange={(e) => setCmd(Number(e.target.value))}
-            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-1 w-full rounded-lg border border-line bg-white p-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-950"
           >
             {config.commands.map((c) => (
               <option key={c.seq} value={c.seq}>C{c.seq} · {c.cmd.length > 60 ? `${c.cmd.slice(0, 60)}…` : c.cmd}</option>
@@ -966,14 +984,14 @@ function SayItYourself({ config, active, onResult, onReset }: {
           </select>
         </label>
         <label className="text-sm">
-          <span className="text-zinc-500">Your reason</span>
+          <span className="text-muted">Your reason</span>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={2}
             maxLength={240}
             placeholder="e.g. never stop nginx if the disk is over 90% full"
-            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-1 w-full rounded-lg border border-line bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
           />
         </label>
       </div>
@@ -988,17 +1006,17 @@ function SayItYourself({ config, active, onResult, onReset }: {
           {pending ? "Compiling your reason… (5–15 s)" : "Turn it into automation"}
         </button>
         {active && (
-          <button type="button" onClick={() => { onReset(); setMsg(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700">
+          <button type="button" onClick={() => { onReset(); setMsg(null); }} className="rounded-lg border border-line px-3 py-1.5 text-sm dark:border-zinc-700">
             Back to the original
           </button>
         )}
-        {!live && <span className="text-xs text-zinc-500">Live mode is off on this site right now; the recorded examples below still work.</span>}
+        {!live && <span className="text-xs text-muted">Live mode is off on this site right now; the recorded examples below still work.</span>}
         {msg && <p role="status" className={`text-sm ${msg.ok ? "text-emerald-800 dark:text-emerald-300" : "text-red-800 dark:text-red-300"}`}>{msg.text}</p>}
       </div>
 
       {config.examples.length > 0 && (
         <div className="mt-4">
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-muted">
             Or try a recorded example (real results compiled live by {config.examples[0].model}; instant, no AI call):
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -1019,9 +1037,37 @@ function SayItYourself({ config, active, onResult, onReset }: {
           </div>
         </div>
       )}
-      <p className="mt-3 text-xs text-zinc-500">
+      <p className="mt-3 text-xs text-muted">
         Nothing you say is stored. The result is only shown to you, and SayOps never runs anything from this page.
       </p>
+      </div>
     </section>
+  );
+}
+
+// ---- section nav ---------------------------------------------------------------------------
+
+const SECTIONS = [
+  { href: "#overview", label: "Overview" },
+  { href: "#sayit-h", label: "Say it yourself" },
+  { href: "#fix-h", label: "Talk to fix" },
+  { href: "#timeline-h", label: "Timeline & plan" },
+  { href: "#proof-h", label: "Sandbox proof" },
+  { href: "#artifacts-h", label: "Automation" },
+];
+
+function SectionNav() {
+  return (
+    <nav aria-label="On this page" className="sticky top-14 z-30 -mx-4 mt-8 border-b border-line bg-background/80 px-4 backdrop-blur-md sm:-mx-6 sm:px-6">
+      <ul className="flex gap-1 overflow-x-auto py-2 text-sm [scrollbar-width:none]">
+        {SECTIONS.map((x) => (
+          <li key={x.href}>
+            <a href={x.href} className="block whitespace-nowrap rounded-lg px-3 py-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+              {x.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
